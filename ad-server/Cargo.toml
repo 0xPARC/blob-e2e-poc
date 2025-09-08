@@ -1,0 +1,10 @@
+[package]
+name = "ad-server"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+alloy = { workspace = true }
+tokio = { workspace = true }
+
+pod2_onchain = { git = "https://github.com/0xPARC/pod2-onchain.git", rev = "0fa4ab2b4a462b70f2ef284a8a562ea2364d9563" }
