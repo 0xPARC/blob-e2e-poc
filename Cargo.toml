@@ -16,5 +16,8 @@ alloy = { version = "1.0.13", features = [
 ] }
 tokio = {version="1.45", features = ["rt-multi-thread", "macros"]}
 pod2 = { git="https://github.com/0xPARC/pod2", rev = "3d098c3ce6c89dbf3c26ef06e9cd4e8b8a484f1a", default-features = false, features = ["backend_plonky2", "disk_cache", "zk"]}
-env_logger = "0.11"
+env_logger = { version = "0.11", features = ["kv"] }
+log = { version = "0.4.14", features = ["kv_unstable"] }
 dotenvy = "0.15.7"
+anyhow = "1.0.56"
+sqlx = { version="0.8.6", features = ["sqlite", "chrono", "runtime-tokio"] }

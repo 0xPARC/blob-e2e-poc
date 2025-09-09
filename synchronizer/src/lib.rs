@@ -1,3 +1,5 @@
+pub mod clients;
+
 use std::error::Error;
 
 use alloy::{
