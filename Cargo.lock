@@ -883,7 +883,7 @@ name = "app"
 version = "0.1.0"
 dependencies = [
  "env_logger",
- "pod2",
+ "pod2 0.1.0 (git+https://github.com/0xPARC/pod2?rev=3d098c3ce6c89dbf3c26ef06e9cd4e8b8a484f1a)",
 ]
 
 [[package]]
@@ -3178,6 +3178,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "plonky2_u32"
+version = "0.1.0"
+source = "git+https://github.com/ax0/plonky2-u32?rev=c1cc9384c1ac6bfb61e035bf71c94095fa69599f#c1cc9384c1ac6bfb61e035bf71c94095fa69599f"
+dependencies = [
+ "anyhow",
+ "itertools 0.10.5",
+ "num",
+ "plonky2",
+]
+
+[[package]]
 name = "plonky2_util"
 version = "1.0.0"
 source = "git+https://github.com/0xPARC/plonky2.git?rev=767a098d89b8d50d8aacfdce0c0a7222e8760d37#767a098d89b8d50d8aacfdce0c0a7222e8760d37"
@@ -3185,7 +3196,7 @@ source = "git+https://github.com/0xPARC/plonky2.git?rev=767a098d89b8d50d8aacfdce
 [[package]]
 name = "pod2"
 version = "0.1.0"
-source = "git+https://github.com/0xPARC/pod2?rev=78b49f2437bc6e00be2c371cbf7ac5218792d4d0#78b49f2437bc6e00be2c371cbf7ac5218792d4d0"
+source = "git+https://github.com/0xPARC/pod2?rev=3d098c3ce6c89dbf3c26ef06e9cd4e8b8a484f1a#3d098c3ce6c89dbf3c26ef06e9cd4e8b8a484f1a"
 dependencies = [
  "anyhow",
  "base64",
@@ -3204,7 +3215,42 @@ dependencies = [
  "pest",
  "pest_derive",
  "plonky2",
- "plonky2_u32",
+ "plonky2_u32 0.1.0 (git+https://github.com/ax0/plonky2-u32?rev=c1cc9384c1ac6bfb61e035bf71c94095fa69599f)",
+ "rand 0.8.5",
+ "rand_chacha 0.3.1",
+ "schemars 0.8.22",
+ "serde",
+ "serde_arrays",
+ "serde_bytes",
+ "serde_json",
+ "sha2",
+ "strum 0.26.3",
+ "strum_macros 0.26.4",
+ "thiserror",
+ "vergen-gitcl",
+]
+
+[[package]]
+name = "pod2"
+version = "0.1.0"
+source = "git+https://github.com/0xPARC/pod2?rev=78b49f2437bc6e00be2c371cbf7ac5218792d4d0#78b49f2437bc6e00be2c371cbf7ac5218792d4d0"
+dependencies = [
+ "anyhow",
+ "base64",
+ "bs58",
+ "dyn-clone",
+ "env_logger",
+ "hashbrown 0.14.5",
+ "hex",
+ "itertools 0.14.0",
+ "lazy_static",
+ "log",
+ "num",
+ "num-bigint 0.4.6",
+ "pest",
+ "pest_derive",
+ "plonky2",
+ "plonky2_u32 0.1.0 (git+https://github.com/ax0/plonky2-u32?rev=66ddeb86007f5945b07ca30c6bdd9fb8d0dabd1e)",
  "rand 0.8.5",
  "rand_chacha 0.3.1",
  "schemars 0.8.22",
@@ -3233,7 +3279,7 @@ dependencies = [
  "num",
  "num-bigint 0.4.6",
  "plonky2",
- "pod2",
+ "pod2 0.1.0 (git+https://github.com/0xPARC/pod2?rev=78b49f2437bc6e00be2c371cbf7ac5218792d4d0)",
  "serde",
  "serde_json",
  "sha2",

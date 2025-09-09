@@ -16,9 +16,9 @@ const DEPTH: usize = 32;
 
 struct Helper<'a> {
     builder: &'a mut MainPodBuilder,
-    inc_pred: CustomPredicateRef,
-    update_pred: CustomPredicateRef,
-    update_loop_pred: CustomPredicateRef,
+    inc_pred: &'a CustomPredicateRef,
+    update_pred: &'a CustomPredicateRef,
+    update_loop_pred: &'a CustomPredicateRef,
 }
 
 impl<'a> Helper<'a> {
@@ -107,7 +107,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             SumOf(?new, ?old, ?op["n"])
         )
 
-        update(new, old, private: op) = OR(
+        update(new, old) = OR(
             Equal(?new, ?old) // base
             update_loop(?new, ?old) // recurse
         )
@@ -127,27 +127,42 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initial state
     let state = 0;
 
+    // First batch update with 2 updates
     // Update 1: +3
     let op1 = dict!(DEPTH, {"name" => "inc", "n" => 3}).unwrap();
 
     // Update 2: +4
     let op2 = dict!(DEPTH, {"name" => "inc", "n" => 4}).unwrap();
 
-    // Update 3: +1
+    let mut builder = MainPodBuilder::new(&params, vd_set);
+    let mut helper = Helper {
+        builder: &mut builder,
+        inc_pred: &inc_pred,
+        update_pred: &update_pred,
+        update_loop_pred: &update_loop_pred,
+    };
+
+    let (state, st_update) = helper.st_update(state, &[op1, op2]);
+    builder.reveal(&st_update);
+
+    let pod = builder.prove(prover).unwrap();
+    println!("# pod\n:{}", pod);
+    pod.pod.verify().unwrap();
+
+    // Another batch update with 1 update
     let op3 = dict!(DEPTH, {"name" => "inc", "n" => 1}).unwrap();
 
     let mut builder = MainPodBuilder::new(&params, vd_set);
     let mut helper = Helper {
         builder: &mut builder,
-        inc_pred,
-        update_pred,
-        update_loop_pred,
+        inc_pred: &inc_pred,
+        update_pred: &update_pred,
+        update_loop_pred: &update_loop_pred,
     };
 
-    let (_, st_update) = helper.st_update(state, &[op1, op2, op3]);
+    let (_, st_update) = helper.st_update(state, &[op3]);
     builder.reveal(&st_update);
 
-    // println!("# pod_builder\n:{}", builder);
     let pod = builder.prove(prover).unwrap();
     println!("# pod\n:{}", pod);
     pod.pod.verify().unwrap();
