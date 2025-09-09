@@ -879,6 +879,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b0674a1ddeecb70197781e945de4b3b8ffb61fa939a5597bcf48503737663100"
 
 [[package]]
+name = "app"
+version = "0.1.0"
+dependencies = [
+ "env_logger",
+ "pod2 0.1.0 (git+https://github.com/0xPARC/pod2?rev=3d098c3ce6c89dbf3c26ef06e9cd4e8b8a484f1a)",
+]
+
+[[package]]
 name = "ark-ff"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1657,6 +1665,27 @@ dependencies = [
  "const-oid",
  "crypto-common",
  "subtle",
+]
+
+[[package]]
+name = "directories"
+version = "6.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "16f5094c54661b38d03bd7e50df373292118db60b585c08a411c6d840017fe7d"
+dependencies = [
+ "dirs-sys",
+]
+
+[[package]]
+name = "dirs-sys"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e01a3366d27ee9890022452ee61b2b63a67e6f13f58900b651ff5665f0bb1fab"
+dependencies = [
+ "libc",
+ "option-ext",
+ "redox_users",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -2575,6 +2604,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f9fbbcab51052fe104eb5e5d351cf728d30a5be1fe14d9be8a3b097481fb97de"
 
 [[package]]
+name = "libredox"
+version = "0.1.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "391290121bad3d37fbddad76d8f5d1c1c314cfc646d143d7e07a3086ddff0ce3"
+dependencies = [
+ "bitflags",
+ "libc",
+]
+
+[[package]]
 name = "linux-raw-sys"
 version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2627,6 +2666,36 @@ name = "memchr"
 version = "2.7.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32a282da65faaf38286cf3be983213fcf1d2e2a58700e808f83f4ea9a4804bc0"
+
+[[package]]
+name = "minicbor"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "734daad4ff3b880f23dc2a675dd74553fa8e583367aa7523f96a16e96a516b62"
+dependencies = [
+ "minicbor-derive",
+]
+
+[[package]]
+name = "minicbor-derive"
+version = "0.17.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "512ce2c37128698ea15c99b3518936c78a8b112b92468e7b95b9fa045666ebd8"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.106",
+]
+
+[[package]]
+name = "minicbor-serde"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a05d783cc8c3cdbde9f7ee9eeeef417810278e81fb6289634fdbc952d462fc23"
+dependencies = [
+ "minicbor",
+ "serde",
+]
 
 [[package]]
 name = "miniz_oxide"
@@ -2878,6 +2947,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "option-ext"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "04744f49eae99ab78e0d5c0b603ab218f515ea8cfe5a456d7629ad883a3b6e7d"
+
+[[package]]
 name = "parity-scale-codec"
 version = "3.7.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3103,9 +3178,57 @@ dependencies = [
 ]
 
 [[package]]
+name = "plonky2_u32"
+version = "0.1.0"
+source = "git+https://github.com/ax0/plonky2-u32?rev=c1cc9384c1ac6bfb61e035bf71c94095fa69599f#c1cc9384c1ac6bfb61e035bf71c94095fa69599f"
+dependencies = [
+ "anyhow",
+ "itertools 0.10.5",
+ "num",
+ "plonky2",
+]
+
+[[package]]
 name = "plonky2_util"
 version = "1.0.0"
 source = "git+https://github.com/0xPARC/plonky2.git?rev=767a098d89b8d50d8aacfdce0c0a7222e8760d37#767a098d89b8d50d8aacfdce0c0a7222e8760d37"
+
+[[package]]
+name = "pod2"
+version = "0.1.0"
+source = "git+https://github.com/0xPARC/pod2?rev=3d098c3ce6c89dbf3c26ef06e9cd4e8b8a484f1a#3d098c3ce6c89dbf3c26ef06e9cd4e8b8a484f1a"
+dependencies = [
+ "anyhow",
+ "base64",
+ "bs58",
+ "directories",
+ "dyn-clone",
+ "env_logger",
+ "hashbrown 0.14.5",
+ "hex",
+ "itertools 0.14.0",
+ "lazy_static",
+ "log",
+ "minicbor-serde",
+ "num",
+ "num-bigint 0.4.6",
+ "pest",
+ "pest_derive",
+ "plonky2",
+ "plonky2_u32 0.1.0 (git+https://github.com/ax0/plonky2-u32?rev=c1cc9384c1ac6bfb61e035bf71c94095fa69599f)",
+ "rand 0.8.5",
+ "rand_chacha 0.3.1",
+ "schemars 0.8.22",
+ "serde",
+ "serde_arrays",
+ "serde_bytes",
+ "serde_json",
+ "sha2",
+ "strum 0.26.3",
+ "strum_macros 0.26.4",
+ "thiserror",
+ "vergen-gitcl",
+]
 
 [[package]]
 name = "pod2"
@@ -3127,7 +3250,7 @@ dependencies = [
  "pest",
  "pest_derive",
  "plonky2",
- "plonky2_u32",
+ "plonky2_u32 0.1.0 (git+https://github.com/ax0/plonky2-u32?rev=66ddeb86007f5945b07ca30c6bdd9fb8d0dabd1e)",
  "rand 0.8.5",
  "rand_chacha 0.3.1",
  "schemars 0.8.22",
@@ -3156,7 +3279,7 @@ dependencies = [
  "num",
  "num-bigint 0.4.6",
  "plonky2",
- "pod2",
+ "pod2 0.1.0 (git+https://github.com/0xPARC/pod2?rev=78b49f2437bc6e00be2c371cbf7ac5218792d4d0)",
  "serde",
  "serde_json",
  "sha2",
@@ -3413,6 +3536,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5407465600fb0548f1442edf71dd20683c6ed326200ace4b1ef0763521bb3b77"
 dependencies = [
  "bitflags",
+]
+
+[[package]]
+name = "redox_users"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a4e608c6638b9c18977b00b475ac1f28d14e84b27d8d42f70e0bf1e3dec127ac"
+dependencies = [
+ "getrandom 0.2.16",
+ "libredox",
+ "thiserror",
 ]
 
 [[package]]
