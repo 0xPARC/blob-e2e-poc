@@ -21,6 +21,7 @@
 
 use std::{fmt::Display, str::FromStr};
 
+use reqwest::{Client, Url};
 use serde::Deserialize;
 
 #[derive(Clone, Debug, Deserialize)]
@@ -60,6 +61,13 @@ pub enum ClientError {
     /// Serde Json deser Error
     #[error("{0}")]
     SerdeError(#[from] serde_json::Error),
+
+    /// NotFound (status 404)
+    #[error("NotFound: {0}")]
+    NotFound(Url),
+
+    #[error("Empty response")]
+    Empty,
 }
 
 /// API Response
@@ -77,11 +85,11 @@ pub enum ClientResponse<T> {
 pub type ClientResult<T> = Result<T, ClientError>;
 
 impl<T> ClientResponse<T> {
-    pub(crate) fn into_client_result(self) -> ClientResult<Option<T>> {
+    pub(crate) fn into_client_result(self) -> ClientResult<T> {
         match self {
             ClientResponse::Error(e) => Err(e.into()),
-            ClientResponse::Success(t) => Ok(Some(t)),
-            ClientResponse::EmptySuccess => Ok(None),
+            ClientResponse::Success(t) => Ok(t),
+            ClientResponse::EmptySuccess => Err(ClientError::Empty),
         }
     }
 

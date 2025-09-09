@@ -24,23 +24,19 @@ pub mod types;
 use std::fmt::Debug;
 
 use anyhow::Context as AnyhowContext;
-use async_trait::async_trait;
 use backoff::ExponentialBackoff;
-
 use reqwest::{Client, Url};
 use reqwest_eventsource::EventSource;
-
 use types::BlockHeader;
 
+use self::types::{Blob, BlobsResponse, Block, BlockId, BlockResponse, Topic};
 use crate::{
     clients::{
         beacon::types::{BlockHeaderResponse, Spec, SpecResponse},
-        common::ClientResult,
+        common::{ClientError, ClientResult},
     },
     json_get,
 };
-
-use self::types::{Blob, BlobsResponse, Block, BlockId, BlockResponse, Topic};
 
 #[derive(Debug, Clone)]
 pub struct BeaconClient {
@@ -54,13 +50,12 @@ pub struct Config {
     pub exp_backoff: Option<ExponentialBackoff>,
 }
 
-#[async_trait]
-pub trait CommonBeaconClient: Send + Sync + Debug {
-    async fn get_block(&self, block_id: BlockId) -> ClientResult<Option<Block>>;
-    async fn get_block_header(&self, block_id: BlockId) -> ClientResult<Option<BlockHeader>>;
-    async fn get_blobs(&self, block_id: BlockId) -> ClientResult<Option<Vec<Blob>>>;
-    async fn get_spec(&self) -> ClientResult<Option<Spec>>;
-    fn subscribe_to_events(&self, topics: &[Topic]) -> ClientResult<EventSource>;
+fn result_some<T>(r: ClientResult<T>) -> ClientResult<Option<T>> {
+    match r {
+        Ok(r) => Ok(Some(r)),
+        Err(ClientError::NotFound(_)) => Ok(None),
+        Err(e) => Err(e),
+    }
 }
 
 impl BeaconClient {
@@ -75,53 +70,48 @@ impl BeaconClient {
             exp_backoff,
         })
     }
-}
 
-#[async_trait]
-impl CommonBeaconClient for BeaconClient {
-    async fn get_block(&self, block_id: BlockId) -> ClientResult<Option<Block>> {
+    pub async fn get_block(&self, block_id: BlockId) -> ClientResult<Option<Block>> {
         let path = format!("v2/beacon/blocks/{}", { block_id.to_detailed_string() });
         let url = self.base_url.join(path.as_str())?;
 
-        json_get!(&self.client, url, BlockResponse, self.exp_backoff.clone())
-            .map(|res| res.map(|r| r.into()))
+        result_some(
+            json_get!(&self.client, url, BlockResponse, self.exp_backoff.clone())
+                .map(|res| res.into()),
+        )
     }
 
-    async fn get_block_header(&self, block_id: BlockId) -> ClientResult<Option<BlockHeader>> {
+    pub async fn get_block_header(&self, block_id: BlockId) -> ClientResult<Option<BlockHeader>> {
         let path = format!("v1/beacon/headers/{}", { block_id.to_detailed_string() });
         let url = self.base_url.join(path.as_str())?;
 
-        json_get!(
-            &self.client,
-            url,
-            BlockHeaderResponse,
-            self.exp_backoff.clone()
+        result_some(
+            json_get!(
+                &self.client,
+                url,
+                BlockHeaderResponse,
+                self.exp_backoff.clone()
+            )
+            .map(|res| res.into()),
         )
-        .map(|res| res.map(|r| r.into()))
     }
 
-    async fn get_blobs(&self, block_id: BlockId) -> ClientResult<Option<Vec<Blob>>> {
+    pub async fn get_blobs(&self, block_id: BlockId) -> ClientResult<Vec<Blob>> {
         let path = format!("v1/beacon/blob_sidecars/{}", {
             block_id.to_detailed_string()
         });
         let url = self.base_url.join(path.as_str())?;
 
-        json_get!(&self.client, url, BlobsResponse, self.exp_backoff.clone()).map(|res| match res {
-            Some(r) => Some(r.data),
-            None => None,
-        })
+        json_get!(&self.client, url, BlobsResponse, self.exp_backoff.clone()).map(|res| res.data)
     }
 
-    async fn get_spec(&self) -> ClientResult<Option<Spec>> {
+    pub async fn get_spec(&self) -> ClientResult<Spec> {
         let url = self.base_url.join("v1/config/spec")?;
 
-        json_get!(&self.client, url, SpecResponse, self.exp_backoff.clone()).map(|res| match res {
-            Some(r) => Some(r.data),
-            None => None,
-        })
+        json_get!(&self.client, url, SpecResponse, self.exp_backoff.clone()).map(|res| res.data)
     }
 
-    fn subscribe_to_events(&self, topics: &[Topic]) -> ClientResult<EventSource> {
+    pub fn subscribe_to_events(&self, topics: &[Topic]) -> ClientResult<EventSource> {
         let topics = topics
             .iter()
             .map(|topic| topic.into())

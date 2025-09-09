@@ -1,12 +1,19 @@
-use anyhow::{anyhow, Result};
+use std::{io, str::FromStr, time::Duration};
+
+use anyhow::{Result, anyhow};
+use backoff::ExponentialBackoffBuilder;
 use log::LevelFilter;
-use sqlx::migrate::MigrateDatabase;
-use sqlx::sqlite::{Sqlite, SqliteConnectOptions};
-use sqlx::ConnectOptions;
-use sqlx::SqlitePool;
-use std::io;
-use std::str::FromStr;
-use std::time::Duration;
+use sqlx::{
+    ConnectOptions, SqlitePool,
+    migrate::MigrateDatabase,
+    sqlite::{Sqlite, SqliteConnectOptions},
+};
+use synchronizer::clients::{
+    beacon::{self, BeaconClient, types::BlockId},
+    common::{ClientError, ClientResult},
+};
+use tracing::{debug, info};
+use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
 fn load_dotenv() -> Result<()> {
     for filename in [".env.default", ".env"] {
@@ -24,7 +31,7 @@ fn load_dotenv() -> Result<()> {
 pub struct Config {
     pub beacon_url: String,
     pub sqlite_path: String,
-    pub sync_start_slot: u64,
+    pub sync_start_slot: u32,
 }
 
 impl Config {
@@ -38,7 +45,7 @@ impl Config {
         Ok(Self {
             beacon_url: var("BEACON_URL")?,
             sqlite_path: var("SQLITE_PATH")?,
-            sync_start_slot: u64::from_str(&var("SYNC_START_SLOT")?)?,
+            sync_start_slot: u32::from_str(&var("SYNC_START_SLOT")?)?,
         })
     }
 }
@@ -56,44 +63,70 @@ async fn db_connection(url: &str) -> Result<SqlitePool, sqlx::Error> {
     Ok(SqlitePool::connect_with(opts).await?)
 }
 
-// #[derive(Debug)]
-// struct Client {
-//     url: String,
-// }
-
-// impl Client {
-//     pub async fn get_blobs(&self, block_id: BlockId) -> Result<Vec<BlobData>> {
-//         let req_url = format!("{}/eth/v1/beacon/blob_sidecars/{}", beacon_url, block_id);
-//         let resp = reqwest::get(req_url).await?.text().await?;
-//         let blob_bundle: BeaconBlobBundle = serde_json::from_str(&resp)?;
-//         Ok(blob_bundle.data)
-//     }
-// }
-
 #[derive(Debug)]
 struct Node {
     cfg: Config,
+    cli: BeaconClient,
     db: SqlitePool,
+}
+
+impl Node {
+    async fn new(cfg: Config) -> Result<Self> {
+        if !Sqlite::database_exists(&cfg.sqlite_path).await? {
+            Sqlite::create_database(&cfg.sqlite_path).await?;
+        }
+        let db = db_connection(&cfg.sqlite_path).await?;
+
+        let http_cli = reqwest::Client::builder()
+            .timeout(Duration::from_secs(8))
+            .build()?;
+
+        let exp_backoff = Some(ExponentialBackoffBuilder::default().build());
+        let beacon_cli_cfg = beacon::Config {
+            base_url: cfg.beacon_url.clone(),
+            exp_backoff,
+        };
+        let cli = BeaconClient::try_with_client(http_cli, beacon_cli_cfg)?;
+
+        Ok(Self { cfg, db, cli })
+    }
+}
+
+fn log_init() {
+    tracing_subscriber::registry()
+        .with(fmt::layer())
+        .with(EnvFilter::from_default_env())
+        .init();
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    env_logger::init();
+    log_init();
     load_dotenv()?;
     let cfg = Config::from_env()?;
-    log::debug!(cfg:?; "Loaded config");
+    debug!(?cfg, "Loaded config");
 
-    if !Sqlite::database_exists(&cfg.sqlite_path).await? {
-        Sqlite::create_database(&cfg.sqlite_path).await?;
+    let node = Node::new(cfg).await?;
+
+    let spec = node.cli.get_spec().await?;
+    info!(?spec, "Beacon spec");
+    let head = node
+        .cli
+        .get_block_header(BlockId::Head)
+        .await?
+        .expect("head is not None");
+    info!(?head, "Beacon head");
+
+    for slot in node.cfg.sync_start_slot..head.slot {
+        let block = match node.cli.get_block(BlockId::Slot(slot)).await? {
+            Some(block) => block,
+            None => {
+                debug!("slot {} has empty block", slot);
+                continue;
+            }
+        };
+        debug!(?block);
     }
-    let db = db_connection(&cfg.sqlite_path).await?;
-
-    let node = Node{
-        cfg,
-        db,
-    };
-
-
 
     Ok(())
 }

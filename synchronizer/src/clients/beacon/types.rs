@@ -24,9 +24,8 @@ use std::{fmt, str::FromStr};
 use alloy::{consensus::Bytes48, eips::eip4844::HeapBlob, primitives::B256};
 use serde::{Deserialize, Serialize};
 
+use super::BeaconClient;
 use crate::clients::common::ClientError;
-
-use super::CommonBeaconClient;
 
 pub type KzgCommitment = Bytes48;
 
@@ -215,9 +214,9 @@ impl FromStr for BlockId {
                             Err(_) => Err(format!("Invalid block ID hash: {s}")),
                         }
                     } else {
-                        Err(
-                            format!("Invalid block ID: {s}. Expected 'head', 'finalized', a hash or a number."),
-                        )
+                        Err(format!(
+                            "Invalid block ID: {s}. Expected 'head', 'finalized', a hash or a number."
+                        ))
                     }
                 }
             },
@@ -279,17 +278,10 @@ pub enum BlockIdResolutionError {
     },
 }
 
-pub trait BlockIdResolution {
+impl BlockId {
     async fn resolve_to_slot(
         &self,
-        beacon_client: &dyn CommonBeaconClient,
-    ) -> Result<u32, BlockIdResolutionError>;
-}
-
-impl BlockIdResolution for BlockId {
-    async fn resolve_to_slot(
-        &self,
-        beacon_client: &dyn CommonBeaconClient,
+        beacon_client: &BeaconClient,
     ) -> Result<u32, BlockIdResolutionError> {
         match self {
             BlockId::Slot(slot) => Ok(*slot),

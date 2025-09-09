@@ -10,7 +10,6 @@ tokio = { workspace = true }
 dotenvy = { workspace = true }
 anyhow = { workspace = true }
 sqlx = { workspace = true }
-env_logger = { workspace = true }
 log = { workspace = true }
 
 blob-indexer = { git = "https://github.com/Blobscan/blobscan-indexer.rs", rev = "9e39b859d7991aee308d388e541dd6e7c2a22b42" }

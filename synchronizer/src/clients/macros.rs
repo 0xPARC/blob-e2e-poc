@@ -19,6 +19,7 @@
 // CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
 // SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
+// TODO: Rewrite as a function
 #[macro_export]
 /// Make a GET request sending and expecting JSON.
 /// if JSON deser fails, emit a `WARN` level tracing event
@@ -88,7 +89,7 @@ macro_rules! json_get {
         let status = resp.status();
 
         if status.as_u16() == 404 {
-          return Ok(None)
+          return Err($crate::clients::common::ClientError::NotFound(url));
         };
 
         let text = resp.text().await?;
@@ -112,6 +113,7 @@ macro_rules! json_get {
     }};
 }
 
+/*
 #[macro_export]
 /// Make a PUT request sending JSON.
 /// if JSON deser fails, emit a `WARN` level tracing event
@@ -162,3 +164,4 @@ macro_rules! json_put {
         result.into_client_result()
     }};
 }
+*/
