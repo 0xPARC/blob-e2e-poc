@@ -20,9 +20,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_blobs() -> Result<(), E> {
-        let client_url = "https://ethereum-beacon-api.publicnode.com";
+        let beacon_url = "https://ethereum-beacon-api.publicnode.com";
         let block_id = 11111111;
-        let blobs = get_blobs(client_url, block_id).await?;
+        let blobs = get_blobs(beacon_url, block_id).await?;
         println!("{:?}", blobs);
         Ok(())
     }
