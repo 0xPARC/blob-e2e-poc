@@ -160,22 +160,143 @@ struct Node {
     verifier_circuit_data: VerifierCircuitData,
 }
 
+// SQL tables
+pub mod tables {
+    #[derive(Debug, PartialEq, Eq, sqlx::FromRow)]
+    pub struct AdUpdate {
+        pub id: Vec<u8>,
+        pub num: i64,
+        pub slot: i64,
+        pub tx_index: i64,
+        pub blob_index: i64,
+        pub update_index: i64,
+        pub timestamp: i64,
+        pub state: Vec<u8>,
+        // pub state_prev: Vec<u8>,
+    }
+}
+
 impl Node {
+    async fn db_add_ad_update(&self, update: &tables::AdUpdate) -> Result<()> {
+        let mut tx = self.db.begin().await?;
+        sqlx::query(
+                "INSERT INTO ad_update (id, num, slot, tx_index, blob_index, update_index, timestamp, state) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            )
+            .bind(&update.id)
+            .bind(update.num)
+            .bind(update.slot)
+            .bind(update.tx_index)
+            .bind(update.blob_index)
+            .bind(update.update_index)
+            .bind(update.timestamp)
+            .bind(&update.state)
+        .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+
+        Ok(())
+    }
+
+    async fn db_get_ad_state(&self, ad_id: &[u8]) -> Result<Vec<u8>> {
+        let (state,) = sqlx::query_as("SELECT state FROM ad_update ORDER BY num DESC LIMIT 1")
+            .bind(ad_id)
+            .fetch_one(&self.db)
+            .await?;
+        Ok(state)
+    }
+
+    // To dump the formatted table via cli:
+    // ```
+    // sqlite3 -header -cmd '.mode columns' /tmp/ad-synchronizer.sqlite 'SELECT hex(id), num, slot, tx_index, blob_index, update_index, timestamp, hex(state) FROM ad_update;'
+    // ```
     async fn init_db(db: &SqlitePool) -> Result<()> {
-        // let mut tx = db.begin().await?;
+        let mut tx = db.begin().await?;
+
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS ad_update (
+                id BLOB NOT NULL,
+                num INTEGER NOT NULL,
+                slot INTEGER NOT NULL,
+                tx_index INTEGER NOT NULL,
+                blob_index INTEGER NOT NULL,
+                update_index INTEGER NOT NULL,
+                timestamp INTEGER NOT NULL,
+
+                state BLOB NOT NULL,
+
+                PRIMARY KEY (id, num)
+            );
+            "#,
+        )
+        .execute(&mut *tx)
+        .await?;
+
         // sqlx::query(
         //     r#"
-        //     CREATE TABLE IF NOT EXISTS slot (
-        //         num   INTEGER PRIMARY KEY,
-        //         root  TEXT,
-        //         parent_root TEXT,
-        //         time INTEGER,
-        //         FOREIGN KEY(dir) REFERENCES folder(path)
+        //     CREATE TABLE IF NOT EXISTS blob (
+        //         kzg_commitment  TEXT NOT NULL,
+        //         execution_block_hash TEXT NOT NULL,
+        //         beacon_block_root TEXT NOT NULL,
+        //         index  INTEGER NOT NULL,
+        //
+        //         PRIMARY KEY (kzg_commitment, beacon_block_root)
+        //         FOREIGN KEY(execution_block_hash)  REFERENCES execution_block(hash)
+        //         FOREIGN KEY(beacon_block_root)  REFERENCES beacon_block(root)
         //     );
         //     "#,
         // )
         // .execute(&mut *tx)
         // .await?;
+
+        // sqlx::query(
+        //     r#"
+        //     CREATE TABLE IF NOT EXISTS transaction (
+        //         hash  TEXT NOT NULL,
+        //         execution_block_hash TEXT NOT NULL,
+        //         number  INTEGER NOT NULL,
+        //         timestamp INTEGER NOT NULL,
+        //         from TEXT NOT NULL,
+        //         to TEXT,
+        //
+        //         PRIMARY KEY (hash, execution_block_hash),
+        //         FOREIGN KEY(execution_block_hash)  REFERENCES execution_block(hash)
+        //     );
+        //     "#,
+        // )
+        // .execute(&mut *tx)
+        // .await?;
+
+        // sqlx::query(
+        //     r#"
+        //     CREATE TABLE IF NOT EXISTS execution_block (
+        //         hash  TEXT PRIMARY KEY,
+        //         number  INTEGER NOT NULL,
+        //         timestamp INTEGER NOT NULL,
+        //         from TEXT NOT NULL,
+        //         to TEXT
+        //     );
+        //     "#,
+        // )
+        // .execute(&mut *tx)
+        // .await?;
+
+        // sqlx::query(
+        //     r#"
+        //     CREATE TABLE IF NOT EXISTS beacon_block (
+        //         slot  INTEGER PRIMARY KEY,
+        //         root  TEXT,
+        //         parent_root TEXT,
+        //         timestamp INTEGER,
+        //         execution_block_hash TEXT,
+        //         FOREIGN KEY(execution_block_hash)  REFERENCES execution_block(hash)
+        //     );
+        //     "#,
+        // )
+        // .execute(&mut *tx)
+        // .await?;
+
+        tx.commit().await?;
 
         Ok(())
     }
@@ -185,7 +306,7 @@ impl Node {
             Sqlite::create_database(&cfg.sqlite_path).await?;
         }
         let db = db_connection(&cfg.sqlite_path).await?;
-        Self::init_db(&db);
+        Self::init_db(&db).await?;
 
         let http_cli = reqwest::Client::builder()
             .timeout(Duration::from_secs(8))
@@ -264,10 +385,11 @@ impl Node {
             .await?
             .with_context(|| format!("Execution block {execution_block_hash} not found"))?;
 
-        let blob_txs: Vec<_> = match execution_block.transactions.as_transactions() {
+        let indexed_blob_txs: Vec<_> = match execution_block.transactions.as_transactions() {
             Some(txs) => txs
                 .into_iter()
-                .filter(|tx| tx.inner.blob_versioned_hashes().is_some())
+                .enumerate()
+                .filter(|(_index, tx)| tx.inner.blob_versioned_hashes().is_some())
                 .collect(),
             None => {
                 return Err(anyhow!(
@@ -276,7 +398,7 @@ impl Node {
             }
         };
 
-        if blob_txs.is_empty() {
+        if indexed_blob_txs.is_empty() {
             return Err(anyhow!("Block mismatch: Consensus block \"{beacon_block_root}\" contains blob KZG commitments, but the corresponding execution block \"{execution_block_hash:#?}\" does not contain any blob transactions").into());
         }
 
@@ -288,7 +410,7 @@ impl Node {
             .map(|blob| kzg_to_versioned_hash(blob.kzg_commitment.as_ref()))
             .collect();
 
-        for tx in blob_txs {
+        for (tx_index, tx) in indexed_blob_txs {
             let tx = tx.as_recovered();
             let hash = tx.hash();
             let from = tx.signer();
@@ -309,11 +431,27 @@ impl Node {
             debug!(?hash, ?from, ?to, ?tx_blob_indices);
 
             if self.cfg.to_addr == to {
-                for blob in tx_blob_indices.iter().map(|i| &blobs[*i]) {
+                for blob_index in tx_blob_indices.iter() {
+                    let blob = &blobs[*blob_index];
                     info!("Found AD blob");
                     match self.pod_from_blob(blob) {
                         Ok(_) => {
-                            info!("MainPod verified!")
+                            info!("MainPod verified!");
+                            let update = tables::AdUpdate {
+                                id: vec![1, 2, 3],
+                                num: 0,
+                                slot: slot as i64,
+                                tx_index: tx_index as i64,
+                                blob_index: *blob_index as i64,
+                                update_index: 0,
+                                timestamp: execution_block.header.timestamp as i64,
+                                state: vec![4, 5, 6, 7, 8],
+                            };
+                            self.db_add_ad_update(&update).await?;
+                            // Just for testing
+                            let ad_id = &[1, 2, 3];
+                            let state = self.db_get_ad_state(ad_id).await?;
+                            info!("State of id={:?} is {:?}", ad_id, state);
                         }
                         Err(e) => {
                             debug!("Invalid pod in blob: {:?}", e);
