@@ -1,10 +1,14 @@
 use std::{io, str::FromStr, time::Duration};
 
 use alloy::{
-    consensus as alloy_consensus, eips as alloy_eips, network as alloy_network,
+    consensus as alloy_consensus,
+    consensus::Transaction,
+    eips as alloy_eips,
+    eips::eip4844::kzg_to_versioned_hash,
+    network as alloy_network,
+    primitives::{Address, B256},
     providers as alloy_provider,
 };
-use alloy_consensus::transaction::Transaction;
 use alloy_network::Ethereum;
 use alloy_provider::{Provider, ProviderBuilder, RootProvider};
 use anyhow::{Context, Result, anyhow};
@@ -43,21 +47,20 @@ pub struct Config {
     pub rpc_url: String,
     pub sqlite_path: String,
     pub sync_start_slot: u32,
+    pub to_addr: Address,
 }
 
 impl Config {
     fn from_env() -> Result<Self> {
         fn var(v: &str) -> Result<String> {
-            match dotenvy::var(v) {
-                Err(e) => Err(anyhow!("{} \"{}\"", e, v)),
-                Ok(s) => Ok(s),
-            }
+            dotenvy::var(v).with_context(|| v.to_string())
         }
         Ok(Self {
             beacon_url: var("BEACON_URL")?,
             rpc_url: var("RPC_URL")?,
             sqlite_path: var("SQLITE_PATH")?,
             sync_start_slot: u32::from_str(&var("SYNC_START_SLOT")?)?,
+            to_addr: Address::from_str(&var("TO_ADDR")?)?,
         })
     }
 }
@@ -117,21 +120,25 @@ impl Node {
         let beacon_block_root = beacon_block_header.root;
         let slot = beacon_block_header.slot;
 
-        let beacon_block = match self.beacon_cli.get_block(BlockId::Slot(slot)).await? {
+        let beacon_block = match self
+            .beacon_cli
+            .get_block(BlockId::Hash(beacon_block_root))
+            .await?
+        {
             Some(block) => block,
             None => {
-                info!("slot {} has empty block", slot);
+                debug!("slot {} has empty block", slot);
                 return Ok(None);
             }
         };
         let execution_payload = match beacon_block.execution_payload {
             Some(payload) => payload,
             None => {
-                info!("slot {} has no execution payload", slot);
+                debug!("slot {} has no execution payload", slot);
                 return Ok(None);
             }
         };
-        info!(
+        debug!(
             "slot {} has execution block {} at height {}",
             slot, execution_payload.block_hash, execution_payload.block_number
         );
@@ -140,8 +147,8 @@ impl Node {
             Some(commitments) => !commitments.is_empty(),
             None => false,
         };
-        if has_kzg_blob_commitments {
-            info!("slot {} has no blobs", slot);
+        if !has_kzg_blob_commitments {
+            debug!("slot {} has no blobs", slot);
             return Ok(None);
         }
 
@@ -172,7 +179,39 @@ impl Node {
         }
 
         let blobs = self.beacon_cli.get_blobs(slot.into()).await?;
-        info!("found {} blobs", blobs.len());
+        debug!("found {} blobs", blobs.len());
+
+        let blobs_vh: Vec<_> = blobs
+            .iter()
+            .map(|blob| kzg_to_versioned_hash(blob.kzg_commitment.as_ref()))
+            .collect();
+
+        for tx in blob_txs {
+            let tx = tx.as_recovered();
+            let hash = tx.hash();
+            let from = tx.signer();
+            let to = match tx.to() {
+                Some(to) => to,
+                None => continue, // blob in a CREATE tx
+            };
+            let tx_blobs_vh = tx.blob_versioned_hashes().expect("tx has blobs");
+            let tx_blob_indices: Vec<_> = tx_blobs_vh
+                .iter()
+                .map(|tx_blob_vh| {
+                    blobs_vh
+                        .iter()
+                        .position(|blob_vh| blob_vh == tx_blob_vh)
+                        .expect("blob in beacon block")
+                })
+                .collect();
+            debug!(?hash, ?from, ?to, ?tx_blob_indices);
+
+            if self.cfg.to_addr == to {
+                for blob in tx_blob_indices.iter().map(|i| &blobs[*i]) {
+                    info!("AD blob");
+                }
+            }
+        }
         Ok(Some(()))
     }
 }
@@ -203,6 +242,7 @@ async fn main() -> Result<()> {
     info!(?head, "Beacon head");
 
     for slot in node.cfg.sync_start_slot..head.slot {
+        info!("checking slot {}", slot);
         let beacon_block_header = match node
             .beacon_cli
             .get_block_header(BlockId::Slot(slot))
@@ -210,7 +250,7 @@ async fn main() -> Result<()> {
         {
             Some(block) => block,
             None => {
-                info!("slot {} has empty block", slot);
+                debug!("slot {} has empty block", slot);
                 continue;
             }
         };

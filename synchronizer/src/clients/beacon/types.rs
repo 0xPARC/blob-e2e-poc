@@ -106,6 +106,8 @@ pub struct BlockResponse {
 
 #[derive(Deserialize, Debug)]
 pub struct Blob {
+    #[serde(deserialize_with = "deserialize_u32")]
+    pub index: u32,
     pub kzg_commitment: KzgCommitment,
     pub kzg_proof: Proof,
     pub blob: HeapBlob,

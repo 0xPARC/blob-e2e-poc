@@ -102,7 +102,10 @@ impl BeaconClient {
         });
         let url = self.base_url.join(path.as_str())?;
 
-        json_get!(&self.client, url, BlobsResponse, self.exp_backoff.clone()).map(|res| res.data)
+        let mut blobs = json_get!(&self.client, url, BlobsResponse, self.exp_backoff.clone())
+            .map(|res| res.data)?;
+        blobs.sort_by_key(|blob| blob.index);
+        Ok(blobs)
     }
 
     pub async fn get_spec(&self) -> ClientResult<Spec> {
