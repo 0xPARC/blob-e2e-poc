@@ -113,7 +113,7 @@ impl Node {
         })
     }
 
-    async fn process_beeacon_block_header(
+    async fn process_beacon_block_header(
         &self,
         beacon_block_header: &BlockHeader,
     ) -> Result<Option<()>> {
@@ -175,7 +175,7 @@ impl Node {
         };
 
         if blob_txs.is_empty() {
-            return Err(anyhow!("Blocks mismatch: Consensus block \"{beacon_block_root}\" contains blob KZG commitments, but the corresponding execution block \"{execution_block_hash:#?}\" does not contain any blob transactions").into());
+            return Err(anyhow!("Block mismatch: Consensus block \"{beacon_block_root}\" contains blob KZG commitments, but the corresponding execution block \"{execution_block_hash:#?}\" does not contain any blob transactions").into());
         }
 
         let blobs = self.beacon_cli.get_blobs(slot.into()).await?;
@@ -255,7 +255,7 @@ async fn main() -> Result<()> {
             }
         };
 
-        node.process_beeacon_block_header(&beacon_block_header)
+        node.process_beacon_block_header(&beacon_block_header)
             .await?;
     }
 
