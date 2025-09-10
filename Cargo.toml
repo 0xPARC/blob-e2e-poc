@@ -16,10 +16,14 @@ alloy = { version = "1.0.13", features = [
 ] }
 tokio = {version="1.45", features = ["rt-multi-thread", "macros"]}
 plonky2 = { git = "https://github.com/0xPARC/plonky2.git", rev = "767a098d89b8d50d8aacfdce0c0a7222e8760d37" }
-pod2 = { git="https://github.com/0xPARC/pod2", rev = "3d098c3ce6c89dbf3c26ef06e9cd4e8b8a484f1a", default-features = false, features = ["backend_plonky2", "disk_cache", "zk"]}
-pod2_onchain = { git = "https://github.com/0xPARC/pod2-onchain.git", rev = "0fa4ab2b4a462b70f2ef284a8a562ea2364d9563" }
+pod2 = { git="https://github.com/0xPARC/pod2", rev = "021ccaeaa8693dec7b9538aad03931c85a83c191", default-features = false, features = ["backend_plonky2", "disk_cache", "zk"]}
+# pod2_onchain = { git = "https://github.com/0xPARC/pod2-onchain.git", rev = "8686080c2be09f0892ad016c7be89d0192e03d3b" }
 env_logger = { version = "0.11" }
 log = { version = "0.4.14", features = ["kv_unstable"] }
 dotenvy = "0.15.7"
 anyhow = "1.0.56"
 sqlx = { version="0.8.6", features = ["sqlite", "chrono", "runtime-tokio"] }
+
+
+# [patch."https://github.com/0xPARC/pod2"]
+# pod2 = { git="https://github.com/0xPARC/pod2?rev=main", rev = "021ccaeaa8693dec7b9538aad03931c85a83c191" }

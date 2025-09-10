@@ -14,20 +14,83 @@ use alloy_provider::{Provider, ProviderBuilder, RootProvider};
 use anyhow::{Context, Result, anyhow};
 use backoff::ExponentialBackoffBuilder;
 use log::LevelFilter;
+use plonky2::plonk::{
+    circuit_builder::CircuitBuilder, circuit_data::CircuitConfig, config::GenericConfig,
+    proof::CompressedProofWithPublicInputs,
+};
+use pod2::{
+    backends::plonky2::{
+        mainpod::{
+            Prover, cache_get_rec_main_pod_common_circuit_data,
+            cache_get_rec_main_pod_verifier_circuit_data,
+        },
+        serialization::{CommonCircuitDataSerializer, VerifierCircuitDataSerializer},
+    },
+    cache,
+    cache::CacheEntry,
+    frontend::{MainPodBuilder, Operation},
+    middleware::{C, CommonCircuitData, D, DEFAULT_VD_SET, Params, VerifierCircuitData},
+};
 use sqlx::{
     ConnectOptions, SqlitePool,
     migrate::MigrateDatabase,
     sqlite::{Sqlite, SqliteConnectOptions},
 };
-use synchronizer::clients::{
-    beacon::{
-        self, BeaconClient,
-        types::{BlockHeader, BlockId},
+use synchronizer::{
+    bytes_from_simple_blob,
+    clients::{
+        beacon::{
+            self, BeaconClient,
+            types::{Blob, BlockHeader, BlockId},
+        },
+        common::{ClientError, ClientResult},
     },
-    common::{ClientError, ClientResult},
 };
+use tokio::time::sleep;
 use tracing::{debug, info};
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
+
+/// performs 1 level recursion (plonky2) to get rid of extra custom gates and zk
+pub fn shrinked_mainpod_circuit_data(
+    params: &Params,
+) -> Result<(CommonCircuitData, VerifierCircuitData)> {
+    let common_circuit_data = cache_get_rec_main_pod_common_circuit_data(&params);
+    let verifier_circuit_data = cache_get_rec_main_pod_verifier_circuit_data(&params);
+
+    let config = CircuitConfig::standard_recursion_config();
+    let mut builder: CircuitBuilder<<C as GenericConfig<D>>::F, D> = CircuitBuilder::new(config);
+
+    // create circuit logic
+    let proof_with_pis_target = builder.add_virtual_proof_with_pis(&common_circuit_data);
+    let verifier_circuit_target =
+        builder.constant_verifier_data(&verifier_circuit_data.verifier_only);
+    builder.verify_proof::<C>(
+        &proof_with_pis_target,
+        &verifier_circuit_target,
+        &common_circuit_data,
+    );
+
+    builder.register_public_inputs(&proof_with_pis_target.public_inputs);
+
+    let circuit_data = builder.build::<C>();
+
+    let verifier_data = circuit_data.verifier_data();
+    Ok((circuit_data.common, verifier_data))
+}
+
+pub fn cache_get_shrinked_main_pod_circuit_data(
+    params: &Params,
+) -> CacheEntry<(CommonCircuitDataSerializer, VerifierCircuitDataSerializer)> {
+    cache::get("shrinked_main_pod_circuit_data", &params, |params| {
+        let (common, verifier) =
+            shrinked_mainpod_circuit_data(params).expect("build shrinked_mainpod");
+        (
+            CommonCircuitDataSerializer(common),
+            VerifierCircuitDataSerializer(verifier),
+        )
+    })
+    .expect("cache ok")
+}
 
 fn load_dotenv() -> Result<()> {
     for filename in [".env.default", ".env"] {
@@ -43,11 +106,18 @@ fn load_dotenv() -> Result<()> {
 
 #[derive(Debug)]
 pub struct Config {
+    // The URL for the Beacon API
     pub beacon_url: String,
+    // The URL for the Ethereum RPC API
     pub rpc_url: String,
+    // The path to the sqlite database (it will be a file)
     pub sqlite_path: String,
-    pub sync_start_slot: u32,
+    // The slot where the AD updates begins
+    pub ad_genesis_slot: u32,
+    // The address that receives AD update via blobs
     pub to_addr: Address,
+    // Max Beacon API + RPC requests per second
+    pub request_rate: u64,
 }
 
 impl Config {
@@ -59,8 +129,9 @@ impl Config {
             beacon_url: var("BEACON_URL")?,
             rpc_url: var("RPC_URL")?,
             sqlite_path: var("SQLITE_PATH")?,
-            sync_start_slot: u32::from_str(&var("SYNC_START_SLOT")?)?,
+            ad_genesis_slot: u32::from_str(&var("AD_GENESIS_SLOT")?)?,
             to_addr: Address::from_str(&var("TO_ADDR")?)?,
+            request_rate: u64::from_str(&var("REQUEST_RATE")?)?,
         })
     }
 }
@@ -81,17 +152,40 @@ async fn db_connection(url: &str) -> Result<SqlitePool, sqlx::Error> {
 #[derive(Debug)]
 struct Node {
     cfg: Config,
+    params: Params,
     beacon_cli: BeaconClient,
     rpc_cli: RootProvider,
     db: SqlitePool,
+    common_circuit_data: CommonCircuitData,
+    verifier_circuit_data: VerifierCircuitData,
 }
 
 impl Node {
+    async fn init_db(db: &SqlitePool) -> Result<()> {
+        // let mut tx = db.begin().await?;
+        // sqlx::query(
+        //     r#"
+        //     CREATE TABLE IF NOT EXISTS slot (
+        //         num   INTEGER PRIMARY KEY,
+        //         root  TEXT,
+        //         parent_root TEXT,
+        //         time INTEGER,
+        //         FOREIGN KEY(dir) REFERENCES folder(path)
+        //     );
+        //     "#,
+        // )
+        // .execute(&mut *tx)
+        // .await?;
+
+        Ok(())
+    }
+
     async fn new(cfg: Config) -> Result<Self> {
         if !Sqlite::database_exists(&cfg.sqlite_path).await? {
             Sqlite::create_database(&cfg.sqlite_path).await?;
         }
         let db = db_connection(&cfg.sqlite_path).await?;
+        Self::init_db(&db);
 
         let http_cli = reqwest::Client::builder()
             .timeout(Duration::from_secs(8))
@@ -105,11 +199,19 @@ impl Node {
         let beacon_cli = BeaconClient::try_with_client(http_cli, beacon_cli_cfg)?;
         let rpc_cli = RootProvider::<Ethereum>::new_http(cfg.rpc_url.parse()?);
 
+        let params = Params::default();
+        info!("Loading circuit data...");
+        let (common_circuit_data, verifier_circuit_data) =
+            &*cache_get_shrinked_main_pod_circuit_data(&params);
+
         Ok(Self {
             cfg,
             db,
             beacon_cli,
             rpc_cli,
+            params,
+            common_circuit_data: (**common_circuit_data).clone(),
+            verifier_circuit_data: (**verifier_circuit_data).clone(),
         })
     }
 
@@ -208,11 +310,36 @@ impl Node {
 
             if self.cfg.to_addr == to {
                 for blob in tx_blob_indices.iter().map(|i| &blobs[*i]) {
-                    info!("AD blob");
+                    info!("Found AD blob");
+                    match self.pod_from_blob(blob) {
+                        Ok(_) => {
+                            info!("MainPod verified!")
+                        }
+                        Err(e) => {
+                            debug!("Invalid pod in blob: {:?}", e);
+                            continue;
+                        }
+                    };
                 }
             }
         }
         Ok(Some(()))
+    }
+
+    fn pod_from_blob(&self, blob: &Blob) -> Result<()> {
+        let bytes =
+            bytes_from_simple_blob(blob.blob.inner()).context("Invalid byte encoding in blob")?;
+        let proof = CompressedProofWithPublicInputs::<_, C, D>::from_bytes(
+            bytes,
+            &self.common_circuit_data,
+        )
+        .context("CompressedProofWithPublicInputs::from_bytes")?
+        .decompress(
+            &self.verifier_circuit_data.verifier_only.circuit_digest,
+            &self.common_circuit_data,
+        )
+        .context("CompressedProofWithPublicInputs::decompress")?;
+        self.verifier_circuit_data.verify(proof)
     }
 }
 
@@ -241,7 +368,7 @@ async fn main() -> Result<()> {
         .expect("head is not None");
     info!(?head, "Beacon head");
 
-    for slot in node.cfg.sync_start_slot..head.slot {
+    for slot in node.cfg.ad_genesis_slot..head.slot {
         info!("checking slot {}", slot);
         let beacon_block_header = match node
             .beacon_cli
@@ -257,6 +384,12 @@ async fn main() -> Result<()> {
 
         node.process_beacon_block_header(&beacon_block_header)
             .await?;
+
+        if node.cfg.request_rate != 0 {
+            let requests = 5;
+            let delay_ms = 1000 * requests / node.cfg.request_rate;
+            sleep(Duration::from_millis(delay_ms)).await;
+        }
     }
 
     Ok(())
