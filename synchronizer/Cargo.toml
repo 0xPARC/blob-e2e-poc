@@ -6,7 +6,6 @@ edition = "2024"
 [dependencies]
 alloy = { workspace = true }
 pod2 = { workspace = true }
-# pod2_onchain = { workspace = true }
 plonky2 = { workspace = true }
 serde_json = "1.0.143"
 tokio = { workspace = true }
@@ -14,6 +13,8 @@ dotenvy = { workspace = true }
 anyhow = { workspace = true }
 sqlx = { workspace = true }
 log = { workspace = true }
+
+common = { path = "../common" }
 
 blob-indexer = { git = "https://github.com/Blobscan/blobscan-indexer.rs", rev = "9e39b859d7991aee308d388e541dd6e7c2a22b42" }
 serde = { version = "1.0.150", features = ["derive"] }

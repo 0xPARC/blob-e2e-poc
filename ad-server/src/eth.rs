@@ -9,21 +9,18 @@ use alloy::{
 };
 use anyhow::Result;
 
-// ethereum private key to use for the tx
-const PRIV_KEY: &str = "";
-// ethereum node rpc url
-const RPC_URL: &str = "";
+use crate::Config;
 
-pub async fn send_pod_proof(compressed_proof_bytes: Vec<u8>) -> Result<TxHash> {
-    if PRIV_KEY == "" {
+pub async fn send_pod_proof(cfg: Config, compressed_proof_bytes: Vec<u8>) -> Result<TxHash> {
+    if cfg.priv_key == "" {
         // test mode, return a mock tx_hash
         return Ok(TxHash::from([0u8; 32]));
     }
     // PART 2: send the pod2 proof into a tx blob
-    let signer: PrivateKeySigner = PRIV_KEY.parse()?;
+    let signer: PrivateKeySigner = cfg.priv_key.parse()?;
     let provider = ProviderBuilder::new()
         .wallet(signer.clone())
-        .connect(RPC_URL)
+        .connect(&cfg.rpc_url)
         .await?;
 
     let latest_block = provider.get_block_number().await?;

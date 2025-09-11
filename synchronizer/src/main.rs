@@ -13,6 +13,7 @@ use alloy_network::Ethereum;
 use alloy_provider::{Provider, ProviderBuilder, RootProvider};
 use anyhow::{Context, Result, anyhow};
 use backoff::ExponentialBackoffBuilder;
+use common::load_dotenv;
 use log::LevelFilter;
 use plonky2::plonk::{
     circuit_builder::CircuitBuilder, circuit_data::CircuitConfig, config::GenericConfig,
@@ -94,18 +95,6 @@ pub fn cache_get_shrinked_main_pod_circuit_data(
     .expect("cache ok")
 }
 
-fn load_dotenv() -> Result<()> {
-    for filename in [".env.default", ".env"] {
-        if let Err(err) = dotenvy::from_filename_override(filename) {
-            match err {
-                dotenvy::Error::Io(e) if e.kind() == io::ErrorKind::NotFound => {}
-                _ => return Err(err)?,
-            }
-        }
-    }
-    Ok(())
-}
-
 #[derive(Debug)]
 pub struct Config {
     // The URL for the Beacon API
@@ -136,19 +125,6 @@ impl Config {
             request_rate: u64::from_str(&var("REQUEST_RATE")?)?,
         })
     }
-}
-
-async fn db_connection(url: &str) -> Result<SqlitePool, sqlx::Error> {
-    let opts = SqliteConnectOptions::from_str(url)?
-        // https://docs.rs/sqlx/latest/sqlx/sqlite/struct.SqliteConnectOptions.html#method.serialized
-        // > Setting this to true may help if you are getting access violation errors or
-        // segmentation faults, but will also incur a significant performance penalty. You should
-        // leave this set to false if at all possible.
-        .serialized(false)
-        .busy_timeout(Duration::from_secs(3600))
-        .log_statements(LevelFilter::Debug)
-        .log_slow_statements(LevelFilter::Warn, Duration::from_millis(800));
-    Ok(SqlitePool::connect_with(opts).await?)
 }
 
 #[derive(Debug)]
@@ -339,7 +315,7 @@ impl Node {
         if !Sqlite::database_exists(&cfg.sqlite_path).await? {
             Sqlite::create_database(&cfg.sqlite_path).await?;
         }
-        let db = db_connection(&cfg.sqlite_path).await?;
+        let db = common::db_connection(&cfg.sqlite_path).await?;
         Self::init_db(&db).await?;
 
         let http_cli = reqwest::Client::builder()

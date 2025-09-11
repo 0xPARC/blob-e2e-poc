@@ -1,7 +1,7 @@
 use sqlx::{FromRow, SqlitePool};
 use warp::Filter;
 
-use crate::db;
+use crate::{Config, db};
 
 // TODO rm all unwraps
 
@@ -41,6 +41,7 @@ pub async fn handler_new_counter(db_pool: SqlitePool) -> Result<impl warp::Reply
 pub async fn handler_incr_counter(
     id: i64,
     count: i64,
+    cfg: Config,
     db_pool: SqlitePool,
 ) -> Result<impl warp::Reply, warp::Rejection> {
     assert!(count < 10);
@@ -68,7 +69,7 @@ pub async fn handler_incr_counter(
         .unwrap();
     let proof_bytes = compressed_proof.to_bytes();
 
-    let tx_hash = crate::eth::send_pod_proof(proof_bytes).await.unwrap();
+    let tx_hash = crate::eth::send_pod_proof(cfg, proof_bytes).await.unwrap();
     Ok(warp::reply::json(&tx_hash))
 }
 
@@ -76,11 +77,12 @@ pub async fn handler_incr_counter(
 
 // build the routes
 pub fn routes(
+    cfg: Config,
     db_pool: SqlitePool,
 ) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
     get_counter(db_pool.clone())
         .or(new_counter(db_pool.clone()))
-        .or(increment_counter(db_pool.clone()))
+        .or(increment_counter(cfg, db_pool.clone()))
 }
 fn get_counter(
     db_pool: SqlitePool,
@@ -103,6 +105,7 @@ fn new_counter(
         .and_then(handler_new_counter)
 }
 fn increment_counter(
+    cfg: Config,
     db_pool: SqlitePool,
 ) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
     let db_filter = warp::any().map(move || db_pool.clone());
@@ -111,17 +114,28 @@ fn increment_counter(
         .and(warp::post())
         .and(warp::body::content_length_limit(1024 * 16)) // max 16kb
         .and(warp::body::json())
+        .and(with_config(cfg))
         .and(db_filter)
         .and_then(handler_incr_counter)
 }
 
+fn with_config(
+    cfg: Config,
+) -> impl Filter<Extract = (Config,), Error = std::convert::Infallible> + Clone {
+    warp::any().map(move || cfg.clone())
+}
+
 #[cfg(test)]
 mod tests {
-    use super::*;
     use warp::http::StatusCode;
+
+    use super::*;
 
     #[tokio::test]
     async fn test_post_pod_success() -> anyhow::Result<()> {
+        common::load_dotenv()?;
+        let cfg = Config::from_env()?;
+
         let db_pool = sqlx::sqlite::SqlitePoolOptions::new()
             .min_connections(1) // db config for tests
             .max_connections(1)
@@ -132,7 +146,7 @@ mod tests {
             .expect("cannot connect to db");
         db::init_db(&db_pool).await?;
 
-        let api = routes(db_pool);
+        let api = routes(cfg, db_pool);
 
         // set new counter
         let res = warp::test::request()
