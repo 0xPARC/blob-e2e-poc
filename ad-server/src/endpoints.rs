@@ -1,4 +1,4 @@
-use sqlx::{FromRow, SqlitePool};
+use sqlx::SqlitePool;
 use warp::Filter;
 
 use crate::{Config, db};

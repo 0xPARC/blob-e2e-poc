@@ -8,13 +8,8 @@ use std::{
 use anyhow::Result;
 use itertools::Itertools;
 use plonky2::{
-    field::types::{Field, PrimeField64},
-    hash::hash_types::{HashOut, HashOutTarget},
-    iop::{
-        ext_target::{ExtensionTarget, unflatten_target},
-        target::Target,
-        witness::{PartialWitness, WitnessWrite},
-    },
+    field::types::Field,
+    iop::witness::{PartialWitness, WitnessWrite},
     plonk::{
         circuit_builder::CircuitBuilder,
         circuit_data::{
@@ -28,14 +23,10 @@ use plonky2::{
 use pod2::{
     backends::plonky2::{
         basetypes::{C, D, DEFAULT_VD_SET, F, Proof},
-        circuits::{
-            common::{CircuitBuilderPod, Flattenable, StatementTarget},
-            mainpod::calculate_statements_hash_circuit,
-        },
-        mainpod::{Prover, pad_statement, statement::Statement as bStatement},
+        mainpod::Prover,
     },
     frontend::{MainPodBuilder, Operation},
-    middleware::{Params, Statement, ToFields, containers::Set},
+    middleware::{Params, ToFields, containers::Set},
 };
 
 // returns a MainPod, example adapted from pod2/examples/main_pod_points.rs

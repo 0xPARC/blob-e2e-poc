@@ -1,6 +1,5 @@
 pub mod clients;
 
-use std::error::Error;
 
 use alloy::{
     eips::eip4844::FIELD_ELEMENT_BYTES_USIZE,

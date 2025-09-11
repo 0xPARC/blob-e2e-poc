@@ -1,20 +1,18 @@
-use std::{io, str::FromStr, time::Duration};
+use std::{str::FromStr, time::Duration};
 
 use alloy::{
-    consensus as alloy_consensus,
     consensus::Transaction,
     eips as alloy_eips,
     eips::eip4844::kzg_to_versioned_hash,
     network as alloy_network,
-    primitives::{Address, B256},
+    primitives::Address,
     providers as alloy_provider,
 };
 use alloy_network::Ethereum;
-use alloy_provider::{Provider, ProviderBuilder, RootProvider};
+use alloy_provider::{Provider, RootProvider};
 use anyhow::{Context, Result, anyhow};
 use backoff::ExponentialBackoffBuilder;
 use common::load_dotenv;
-use log::LevelFilter;
 use plonky2::plonk::{
     circuit_builder::CircuitBuilder, circuit_data::CircuitConfig, config::GenericConfig,
     proof::CompressedProofWithPublicInputs,
@@ -22,30 +20,26 @@ use plonky2::plonk::{
 use pod2::{
     backends::plonky2::{
         mainpod::{
-            Prover, cache_get_rec_main_pod_common_circuit_data,
+            cache_get_rec_main_pod_common_circuit_data,
             cache_get_rec_main_pod_verifier_circuit_data,
         },
         serialization::{CommonCircuitDataSerializer, VerifierCircuitDataSerializer},
     },
     cache,
     cache::CacheEntry,
-    frontend::{MainPodBuilder, Operation},
-    middleware::{C, CommonCircuitData, D, DEFAULT_VD_SET, Params, VerifierCircuitData},
+    middleware::{C, CommonCircuitData, D, Params, VerifierCircuitData},
 };
 use sqlx::{
-    ConnectOptions, SqlitePool,
+    SqlitePool,
     migrate::MigrateDatabase,
-    sqlite::{Sqlite, SqliteConnectOptions},
+    sqlite::Sqlite,
 };
 use synchronizer::{
     bytes_from_simple_blob,
-    clients::{
-        beacon::{
+    clients::beacon::{
             self, BeaconClient,
             types::{Blob, BlockHeader, BlockId},
         },
-        common::{ClientError, ClientResult},
-    },
 };
 use tokio::time::sleep;
 use tracing::{debug, info};

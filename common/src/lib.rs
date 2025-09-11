@@ -2,11 +2,7 @@ use std::{io, str::FromStr, time::Duration};
 
 use anyhow::Result;
 use log::LevelFilter;
-use sqlx::{
-    ConnectOptions, FromRow, SqlitePool,
-    migrate::MigrateDatabase,
-    sqlite::{Sqlite, SqliteConnectOptions},
-};
+use sqlx::{ConnectOptions, SqlitePool, sqlite::SqliteConnectOptions};
 
 pub fn load_dotenv() -> Result<()> {
     for filename in [".env.default", ".env"] {

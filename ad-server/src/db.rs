@@ -1,12 +1,8 @@
-use std::{str::FromStr, time::Duration};
 
 pub use common::db_connection;
-use log::LevelFilter;
 use serde::{Deserialize, Serialize};
 use sqlx::{
-    ConnectOptions, FromRow, SqlitePool,
-    migrate::MigrateDatabase,
-    sqlite::{Sqlite, SqliteConnectOptions},
+    FromRow, SqlitePool,
 };
 
 #[derive(Debug, FromRow, Serialize, Deserialize)]

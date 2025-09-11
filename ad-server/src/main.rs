@@ -3,7 +3,7 @@ use std::str::FromStr;
 use alloy::primitives::Address;
 use anyhow::{Context, Result};
 use sqlx::{migrate::MigrateDatabase, sqlite::Sqlite};
-use tracing::{debug, info};
+use tracing::info;
 
 pub mod db;
 pub mod endpoints;
