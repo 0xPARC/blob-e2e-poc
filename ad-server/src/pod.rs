@@ -1,9 +1,6 @@
-use std::{
-    fs,
-    io::{Read, Write},
-    ops::Deref,
-    time::Instant,
-};
+#![allow(clippy::type_complexity)]
+
+use std::{fs, io::Write, ops::Deref, time::Instant};
 
 use anyhow::Result;
 use itertools::Itertools;
@@ -82,7 +79,7 @@ fn prove_pod(
 
     let rec_main_pod_verifier_circuit_data =
         &*pod2::backends::plonky2::mainpod::cache_get_rec_main_pod_verifier_circuit_data(
-            &pod.pod.params(),
+            pod.pod.params(),
         );
     let pod_common_circuit_data: CommonCircuitData<F, D> =
         rec_main_pod_verifier_circuit_data.deref().common.clone();

@@ -26,5 +26,5 @@ pub async fn db_connection(url: &str) -> Result<SqlitePool, sqlx::Error> {
         .busy_timeout(Duration::from_secs(3600))
         .log_statements(LevelFilter::Debug)
         .log_slow_statements(LevelFilter::Warn, Duration::from_millis(800));
-    Ok(SqlitePool::connect_with(opts).await?)
+    SqlitePool::connect_with(opts).await
 }

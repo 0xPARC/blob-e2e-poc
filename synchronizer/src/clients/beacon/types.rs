@@ -19,6 +19,8 @@
 // CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
 // SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
+#![allow(dead_code)]
+
 use std::{fmt, str::FromStr};
 
 use alloy::{consensus::Bytes48, eips::eip4844::HeapBlob, primitives::B256};

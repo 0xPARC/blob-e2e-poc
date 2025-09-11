@@ -1,6 +1,6 @@
 # Counter
 
-A counter that can be incremented by a numer smaller than 10 at each update.
+A counter that can be incremented by a number smaller than 10 at each update.
 
 ## Operations
 

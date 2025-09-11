@@ -1,5 +1,6 @@
-pub mod clients;
+#![allow(clippy::uninlined_format_args)]
 
+pub mod clients;
 
 use alloy::{
     eips::eip4844::FIELD_ELEMENT_BYTES_USIZE,
@@ -8,6 +9,7 @@ use alloy::{
 };
 use anyhow::{Result, anyhow};
 
+#[allow(dead_code)]
 pub(crate) async fn get_blobs(beacon_url: &str, block_id: u64) -> Result<Vec<BlobData>> {
     let req_url = format!("{}/eth/v1/beacon/blob_sidecars/{}", beacon_url, block_id);
     let resp = reqwest::get(req_url).await?.text().await?;
@@ -41,12 +43,12 @@ pub fn bytes_from_simple_blob(blob_bytes: &[u8]) -> Result<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
-    use plonky2::plonk::proof::CompressedProofWithPublicInputs;
-    use pod2::{
-        backends::plonky2::mainpod::Prover,
-        frontend::{MainPodBuilder, Operation},
-        middleware::{DEFAULT_VD_SET, Params},
-    };
+    // use plonky2::plonk::proof::CompressedProofWithPublicInputs;
+    // use pod2::{
+    //     backends::plonky2::mainpod::Prover,
+    //     frontend::{MainPodBuilder, Operation},
+    //     middleware::{DEFAULT_VD_SET, Params},
+    // };
 
     // use pod2_onchain::poseidon_bn128::config::PoseidonBN128GoldilocksConfig;
     use super::*;
@@ -61,22 +63,22 @@ mod tests {
     }
 
     // Culled from https://github.com/arnaucube/pod2-blob-example/blob/13ca6ba9fe06b1295330c2f50107b6cd8a3251ce/src/main.rs#L30
-    pub fn compute_pod_proof() -> Result<pod2::frontend::MainPod> {
-        let params = Params {
-            max_input_pods: 0,
-            ..Default::default()
-        };
-
-        let mut builder = MainPodBuilder::new(&params, &DEFAULT_VD_SET);
-        let set_entries = [1, 2, 3].into_iter().map(|n| n.into()).collect();
-        let set = pod2::middleware::containers::Set::new(10, set_entries)?;
-
-        builder.pub_op(Operation::set_contains(set, 1))?;
-
-        let prover = Prover {};
-        let pod = builder.prove(&prover)?;
-        Ok(pod)
-    }
+    // pub fn compute_pod_proof() -> Result<pod2::frontend::MainPod> {
+    //     let params = Params {
+    //         max_input_pods: 0,
+    //         ..Default::default()
+    //     };
+    //
+    //     let mut builder = MainPodBuilder::new(&params, &DEFAULT_VD_SET);
+    //     let set_entries = [1, 2, 3].into_iter().map(|n| n.into()).collect();
+    //     let set = pod2::middleware::containers::Set::new(10, set_entries)?;
+    //
+    //     builder.pub_op(Operation::set_contains(set, 1))?;
+    //
+    //     let prover = Prover {};
+    //     let pod = builder.prove(&prover)?;
+    //     Ok(pod)
+    // }
     // #[test]
     // fn test_arnau_proof_blob() -> Result<()> {
     //     // Arnau's blob string. Taken from https://sepolia.etherscan.io/tx/0xce74df829b8e7622f0b077e9f8a4caf002f975740ef6f155f02679f0719f4a33#blobs

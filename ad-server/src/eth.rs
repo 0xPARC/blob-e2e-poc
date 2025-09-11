@@ -12,7 +12,7 @@ use anyhow::Result;
 use crate::Config;
 
 pub async fn send_pod_proof(cfg: Config, compressed_proof_bytes: Vec<u8>) -> Result<TxHash> {
-    if cfg.priv_key == "" {
+    if cfg.priv_key.is_empty() {
         // test mode, return a mock tx_hash
         return Ok(TxHash::from([0u8; 32]));
     }
@@ -27,20 +27,20 @@ pub async fn send_pod_proof(cfg: Config, compressed_proof_bytes: Vec<u8>) -> Res
     println!("Latest block number: {latest_block}");
 
     let sender = signer.address();
-    let reciver = Address::from([0x42; 20]);
+    let receiver = Address::from([0x42; 20]);
     dbg!(&sender);
-    dbg!(&reciver);
+    dbg!(&receiver);
 
     let sidecar: SidecarBuilder<SimpleCoder> = SidecarBuilder::from_slice(&compressed_proof_bytes);
     let sidecar = sidecar.build()?;
 
     let tx = TransactionRequest::default()
-        .with_to(reciver)
+        .with_to(receiver)
         .with_blob_sidecar(sidecar);
 
     let pending_tx = provider.send_transaction(tx).await?;
 
-    let tx_hash = pending_tx.tx_hash().clone();
+    let tx_hash = *pending_tx.tx_hash();
     println!("Pending transaction... tx hash: {}", tx_hash);
 
     let receipt = pending_tx.get_receipt().await?;
@@ -51,7 +51,7 @@ pub async fn send_pod_proof(cfg: Config, compressed_proof_bytes: Vec<u8>) -> Res
     );
 
     assert_eq!(receipt.from, sender);
-    assert_eq!(receipt.to, Some(reciver));
+    assert_eq!(receipt.to, Some(receiver));
     assert_eq!(
         receipt
             .blob_gas_used

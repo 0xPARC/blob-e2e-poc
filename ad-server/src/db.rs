@@ -1,9 +1,6 @@
-
 pub use common::db_connection;
 use serde::{Deserialize, Serialize};
-use sqlx::{
-    FromRow, SqlitePool,
-};
+use sqlx::{FromRow, SqlitePool};
 
 #[derive(Debug, FromRow, Serialize, Deserialize)]
 pub struct Counter {

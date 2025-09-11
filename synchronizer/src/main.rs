@@ -1,12 +1,8 @@
 use std::{str::FromStr, time::Duration};
 
 use alloy::{
-    consensus::Transaction,
-    eips as alloy_eips,
-    eips::eip4844::kzg_to_versioned_hash,
-    network as alloy_network,
-    primitives::Address,
-    providers as alloy_provider,
+    consensus::Transaction, eips as alloy_eips, eips::eip4844::kzg_to_versioned_hash,
+    network as alloy_network, primitives::Address, providers as alloy_provider,
 };
 use alloy_network::Ethereum;
 use alloy_provider::{Provider, RootProvider};
@@ -29,17 +25,13 @@ use pod2::{
     cache::CacheEntry,
     middleware::{C, CommonCircuitData, D, Params, VerifierCircuitData},
 };
-use sqlx::{
-    SqlitePool,
-    migrate::MigrateDatabase,
-    sqlite::Sqlite,
-};
+use sqlx::{SqlitePool, migrate::MigrateDatabase, sqlite::Sqlite};
 use synchronizer::{
     bytes_from_simple_blob,
     clients::beacon::{
-            self, BeaconClient,
-            types::{Blob, BlockHeader, BlockId},
-        },
+        self, BeaconClient,
+        types::{Blob, BlockHeader, BlockId},
+    },
 };
 use tokio::time::sleep;
 use tracing::{debug, info};
@@ -48,11 +40,11 @@ use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 const AD_TEST_ID: [u8; 3] = [1, 2, 3];
 
 /// performs 1 level recursion (plonky2) to get rid of extra custom gates and zk
-pub fn shrinked_mainpod_circuit_data(
+pub fn shrunk_mainpod_circuit_data(
     params: &Params,
 ) -> Result<(CommonCircuitData, VerifierCircuitData)> {
-    let common_circuit_data = cache_get_rec_main_pod_common_circuit_data(&params);
-    let verifier_circuit_data = cache_get_rec_main_pod_verifier_circuit_data(&params);
+    let common_circuit_data = cache_get_rec_main_pod_common_circuit_data(params);
+    let verifier_circuit_data = cache_get_rec_main_pod_verifier_circuit_data(params);
 
     let config = CircuitConfig::standard_recursion_config();
     let mut builder: CircuitBuilder<<C as GenericConfig<D>>::F, D> = CircuitBuilder::new(config);
@@ -75,12 +67,11 @@ pub fn shrinked_mainpod_circuit_data(
     Ok((circuit_data.common, verifier_data))
 }
 
-pub fn cache_get_shrinked_main_pod_circuit_data(
+pub fn cache_get_shrunk_main_pod_circuit_data(
     params: &Params,
 ) -> CacheEntry<(CommonCircuitDataSerializer, VerifierCircuitDataSerializer)> {
-    cache::get("shrinked_main_pod_circuit_data", &params, |params| {
-        let (common, verifier) =
-            shrinked_mainpod_circuit_data(params).expect("build shrinked_mainpod");
+    cache::get("shrunk_main_pod_circuit_data", &params, |params| {
+        let (common, verifier) = shrunk_mainpod_circuit_data(params).expect("build shrunk_mainpod");
         (
             CommonCircuitDataSerializer(common),
             VerifierCircuitDataSerializer(verifier),
@@ -124,6 +115,7 @@ impl Config {
 #[derive(Debug)]
 struct Node {
     cfg: Config,
+    #[allow(dead_code)]
     params: Params,
     beacon_cli: BeaconClient,
     rpc_cli: RootProvider,
@@ -327,7 +319,7 @@ impl Node {
         let params = Params::default();
         info!("Loading circuit data...");
         let (common_circuit_data, verifier_circuit_data) =
-            &*cache_get_shrinked_main_pod_circuit_data(&params);
+            &*cache_get_shrunk_main_pod_circuit_data(&params);
 
         Ok(Self {
             cfg,
@@ -391,7 +383,7 @@ impl Node {
 
         let indexed_blob_txs: Vec<_> = match execution_block.transactions.as_transactions() {
             Some(txs) => txs
-                .into_iter()
+                .iter()
                 .enumerate()
                 .filter(|(_index, tx)| tx.inner.blob_versioned_hashes().is_some())
                 .collect(),
@@ -403,7 +395,9 @@ impl Node {
         };
 
         if indexed_blob_txs.is_empty() {
-            return Err(anyhow!("Block mismatch: Consensus block \"{beacon_block_root}\" contains blob KZG commitments, but the corresponding execution block \"{execution_block_hash:#?}\" does not contain any blob transactions").into());
+            return Err(anyhow!(
+                "Block mismatch: Consensus block \"{beacon_block_root}\" contains blob KZG commitments, but the corresponding execution block \"{execution_block_hash:#?}\" does not contain any blob transactions"
+            ));
         }
 
         let blobs = self.beacon_cli.get_blobs(slot.into()).await?;
