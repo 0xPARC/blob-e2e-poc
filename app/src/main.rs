@@ -8,7 +8,7 @@ use pod2::{
     frontend::{MainPodBuilder, Operation},
     lang::parse,
     middleware::{
-        containers::Dictionary, CustomPredicateRef, Key, MainPodProver, Params, Statement, VDSet,
+        CustomPredicateRef, Key, MainPodProver, Params, Statement, VDSet, containers::Dictionary,
     },
 };
 
