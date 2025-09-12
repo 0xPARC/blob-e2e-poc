@@ -3,6 +3,11 @@ use std::str::FromStr;
 
 use alloy::primitives::Address;
 use anyhow::{Context, Result};
+use app::{Predicates, build_predicates};
+use pod2::{
+    backends::plonky2::basetypes::DEFAULT_VD_SET,
+    middleware::{Params, VDSet},
+};
 use sqlx::{migrate::MigrateDatabase, sqlite::Sqlite};
 use tracing::info;
 
@@ -37,19 +42,40 @@ impl Config {
     }
 }
 
+// TODO rename
+#[derive(Debug, Clone)]
+pub struct PodObjs {
+    params: Params,
+    vd_set: VDSet,
+    predicates: Predicates,
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     common::load_dotenv()?;
     let cfg = Config::from_env()?;
     info!(?cfg, "Loaded config");
 
+    // initialize db
     if !Sqlite::database_exists(&cfg.sqlite_path).await? {
         Sqlite::create_database(&cfg.sqlite_path).await?;
     }
     let db_pool = db::db_connection(&cfg.sqlite_path).await?;
     db::init_db(&db_pool).await?;
 
-    let routes = endpoints::routes(cfg, db_pool);
+    // initialize pod data
+    let params = Params::default();
+    println!("Prebuilding circuits to calculate vd_set...");
+    let vd_set = &*DEFAULT_VD_SET;
+    println!("vd_set calculation complete");
+    let predicates = build_predicates(&params);
+    let pod_objs = PodObjs {
+        params,
+        vd_set: vd_set.clone(),
+        predicates,
+    };
+
+    let routes = endpoints::routes(cfg, db_pool, pod_objs);
     println!("server at http://0.0.0.0:8000");
     warp::serve(routes).run(([0, 0, 0, 0], 8000)).await;
 
