@@ -50,6 +50,8 @@ use tokio::time::sleep;
 use tracing::{debug, info};
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
+const AD_TEST_ID: [u8; 3] = [1, 2, 3];
+
 /// performs 1 level recursion (plonky2) to get rid of extra custom gates and zk
 pub fn shrinked_mainpod_circuit_data(
     params: &Params,
@@ -174,6 +176,10 @@ pub mod tables {
         pub state: Vec<u8>,
         // pub state_prev: Vec<u8>,
     }
+    #[derive(Debug, PartialEq, Eq, sqlx::FromRow)]
+    pub struct VisitedSlot {
+        pub slot: i64,
+    }
 }
 
 impl Node {
@@ -197,12 +203,30 @@ impl Node {
         Ok(())
     }
 
+    async fn db_add_visited_slot(&self, slot: i64) -> Result<()> {
+        let mut tx = self.db.begin().await?;
+        sqlx::query("INSERT INTO visited_slot (slot) VALUES (?)")
+            .bind(&slot)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+
+        Ok(())
+    }
+
     async fn db_get_ad_state(&self, ad_id: &[u8]) -> Result<Vec<u8>> {
         let (state,) = sqlx::query_as("SELECT state FROM ad_update ORDER BY num DESC LIMIT 1")
             .bind(ad_id)
             .fetch_one(&self.db)
             .await?;
         Ok(state)
+    }
+
+    async fn db_get_last_visited_slot(&self) -> Result<u32> {
+        let (slot,) = sqlx::query_as("SELECT slot FROM visited_slot ORDER BY slot DESC LIMIT 1")
+            .fetch_one(&self.db)
+            .await?;
+        Ok(slot)
     }
 
     // To dump the formatted table via cli:
@@ -226,6 +250,16 @@ impl Node {
                 state BLOB NOT NULL,
 
                 PRIMARY KEY (id, num)
+            );
+            "#,
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS visited_slot (
+                slot INTEGER NOT NULL
             );
             "#,
         )
@@ -438,7 +472,7 @@ impl Node {
                         Ok(_) => {
                             info!("MainPod verified!");
                             let update = tables::AdUpdate {
-                                id: vec![1, 2, 3],
+                                id: AD_TEST_ID.to_vec(),
                                 num: 0,
                                 slot: slot as i64,
                                 tx_index: tx_index as i64,
@@ -449,7 +483,7 @@ impl Node {
                             };
                             self.db_add_ad_update(&update).await?;
                             // Just for testing
-                            let ad_id = &[1, 2, 3];
+                            let ad_id = &AD_TEST_ID;
                             let state = self.db_get_ad_state(ad_id).await?;
                             info!("State of id={:?} is {:?}", ad_id, state);
                         }
@@ -506,8 +540,16 @@ async fn main() -> Result<()> {
         .expect("head is not None");
     info!(?head, "Beacon head");
 
-    for slot in node.cfg.ad_genesis_slot..head.slot {
+    let initial_slot = node
+        .db_get_last_visited_slot()
+        .await
+        .map(|x| x + 1)
+        .unwrap_or(node.cfg.ad_genesis_slot)
+        .max(node.cfg.ad_genesis_slot);
+
+    for slot in initial_slot..head.slot {
         info!("checking slot {}", slot);
+        println!("checking slot {}", slot);
         let beacon_block_header = match node
             .beacon_cli
             .get_block_header(BlockId::Slot(slot))
@@ -522,6 +564,8 @@ async fn main() -> Result<()> {
 
         node.process_beacon_block_header(&beacon_block_header)
             .await?;
+
+        node.db_add_visited_slot(slot as i64).await?;
 
         if node.cfg.request_rate != 0 {
             let requests = 5;
