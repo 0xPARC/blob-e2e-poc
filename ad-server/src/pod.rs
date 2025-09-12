@@ -1,20 +1,12 @@
-use std::{
-    fs,
-    io::{Read, Write},
-    ops::Deref,
-    time::Instant,
-};
+#![allow(clippy::type_complexity)]
+
+use std::{fs, io::Write, ops::Deref, time::Instant};
 
 use anyhow::Result;
 use itertools::Itertools;
 use plonky2::{
-    field::types::{Field, PrimeField64},
-    hash::hash_types::{HashOut, HashOutTarget},
-    iop::{
-        ext_target::{ExtensionTarget, unflatten_target},
-        target::Target,
-        witness::{PartialWitness, WitnessWrite},
-    },
+    field::types::Field,
+    iop::witness::{PartialWitness, WitnessWrite},
     plonk::{
         circuit_builder::CircuitBuilder,
         circuit_data::{
@@ -28,14 +20,10 @@ use plonky2::{
 use pod2::{
     backends::plonky2::{
         basetypes::{C, D, DEFAULT_VD_SET, F, Proof},
-        circuits::{
-            common::{CircuitBuilderPod, Flattenable, StatementTarget},
-            mainpod::calculate_statements_hash_circuit,
-        },
-        mainpod::{Prover, pad_statement, statement::Statement as bStatement},
+        mainpod::Prover,
     },
     frontend::{MainPodBuilder, Operation},
-    middleware::{Params, Statement, ToFields, containers::Set},
+    middleware::{Params, ToFields, containers::Set},
 };
 
 // returns a MainPod, example adapted from pod2/examples/main_pod_points.rs
@@ -49,7 +37,7 @@ pub fn compute_pod_proof() -> Result<pod2::frontend::MainPod> {
     builder.pub_op(Operation::set_contains(set, 1))?;
 
     let prover = Prover {};
-    let pod = builder.prove(&prover).unwrap();
+    let pod = builder.prove(&prover)?;
     Ok(pod)
 }
 
@@ -91,7 +79,7 @@ fn prove_pod(
 
     let rec_main_pod_verifier_circuit_data =
         &*pod2::backends::plonky2::mainpod::cache_get_rec_main_pod_verifier_circuit_data(
-            &pod.pod.params(),
+            pod.pod.params(),
         );
     let pod_common_circuit_data: CommonCircuitData<F, D> =
         rec_main_pod_verifier_circuit_data.deref().common.clone();

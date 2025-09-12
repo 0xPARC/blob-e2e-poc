@@ -1,28 +1,12 @@
-use log::LevelFilter;
+pub use common::db_connection;
 use serde::{Deserialize, Serialize};
-use sqlx::{
-    migrate::MigrateDatabase,
-    sqlite::{Sqlite, SqliteConnectOptions},
-    ConnectOptions, FromRow, SqlitePool,
-};
-use std::str::FromStr;
-use std::time::Duration;
+use sqlx::{FromRow, SqlitePool};
 
 #[derive(Debug, FromRow, Serialize, Deserialize)]
 pub struct Counter {
     pub id: i64, // TODO maybe use u64 (check db compat)
     pub count: i64,
     // pod, proof, etc
-}
-
-// TODO maybe unify db logic with synchronizer's db helpers (not the db itself)
-pub async fn db_connection(url: &str) -> Result<SqlitePool, sqlx::Error> {
-    let opts = SqliteConnectOptions::from_str(url)?
-        .serialized(false)
-        .busy_timeout(Duration::from_secs(3600))
-        .log_statements(LevelFilter::Debug)
-        .log_slow_statements(LevelFilter::Warn, Duration::from_millis(800));
-    Ok(SqlitePool::connect_with(opts).await?)
 }
 
 pub async fn init_db(db_pool: &SqlitePool) -> Result<(), sqlx::Error> {

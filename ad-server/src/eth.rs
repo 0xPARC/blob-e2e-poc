@@ -9,41 +9,38 @@ use alloy::{
 };
 use anyhow::Result;
 
-// ethereum private key to use for the tx
-const PRIV_KEY: &str = "";
-// ethereum node rpc url
-const RPC_URL: &str = "";
+use crate::Config;
 
-pub async fn send_pod_proof(compressed_proof_bytes: Vec<u8>) -> Result<TxHash> {
-    if PRIV_KEY == "" {
+pub async fn send_pod_proof(cfg: Config, compressed_proof_bytes: Vec<u8>) -> Result<TxHash> {
+    if cfg.priv_key.is_empty() {
         // test mode, return a mock tx_hash
         return Ok(TxHash::from([0u8; 32]));
     }
     // PART 2: send the pod2 proof into a tx blob
-    let signer: PrivateKeySigner = PRIV_KEY.parse()?;
+    let signer: PrivateKeySigner = cfg.priv_key.parse()?;
     let provider = ProviderBuilder::new()
         .wallet(signer.clone())
-        .connect(RPC_URL)
+        .connect(&cfg.rpc_url)
         .await?;
 
     let latest_block = provider.get_block_number().await?;
     println!("Latest block number: {latest_block}");
 
     let sender = signer.address();
-    let reciver = Address::from([0x42; 20]);
+    let receiver = Address::from([0x42; 20]);
     dbg!(&sender);
-    dbg!(&reciver);
+    dbg!(&receiver);
 
     let sidecar: SidecarBuilder<SimpleCoder> = SidecarBuilder::from_slice(&compressed_proof_bytes);
     let sidecar = sidecar.build()?;
 
     let tx = TransactionRequest::default()
-        .with_to(reciver)
+        .with_to(receiver)
         .with_blob_sidecar(sidecar);
 
     let pending_tx = provider.send_transaction(tx).await?;
 
-    let tx_hash = pending_tx.tx_hash().clone();
+    let tx_hash = *pending_tx.tx_hash();
     println!("Pending transaction... tx hash: {}", tx_hash);
 
     let receipt = pending_tx.get_receipt().await?;
@@ -54,7 +51,7 @@ pub async fn send_pod_proof(compressed_proof_bytes: Vec<u8>) -> Result<TxHash> {
     );
 
     assert_eq!(receipt.from, sender);
-    assert_eq!(receipt.to, Some(reciver));
+    assert_eq!(receipt.to, Some(receiver));
     assert_eq!(
         receipt
             .blob_gas_used

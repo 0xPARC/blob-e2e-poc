@@ -21,7 +21,7 @@
 
 use std::{fmt::Display, str::FromStr};
 
-use reqwest::{Client, Url};
+use reqwest::Url;
 use serde::Deserialize;
 
 #[derive(Clone, Debug, Deserialize)]

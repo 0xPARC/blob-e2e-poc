@@ -1,3 +1,4 @@
+#![allow(clippy::uninlined_format_args)]
 //! Run in real mode: `cargo run --release app`
 //! Run in mock mode: `cargo run --release app -- --mock`
 use std::env;
@@ -118,7 +119,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
     "#;
 
-    let batch = parse(&input, &params, &[]).unwrap().custom_batch;
+    let batch = parse(input, &params, &[]).unwrap().custom_batch;
 
     let inc_pred = batch.predicate_ref_by_name("inc").unwrap();
     let update_pred = batch.predicate_ref_by_name("update").unwrap();

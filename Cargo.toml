@@ -2,8 +2,8 @@
 members = [
     "ad-server",
     "synchronizer",
-    "app"
-]
+    "app",
+    "common"]
 resolver = "3"
 
 [workspace.dependencies]
