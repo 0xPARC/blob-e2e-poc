@@ -3,7 +3,11 @@ use warp::Filter;
 
 use crate::{Config, db};
 
-// TODO rm all unwraps
+/// struct used to convert sqlx errors to warp errors
+#[allow(dead_code)]
+#[derive(Debug)]
+struct CustomError(String);
+impl warp::reject::Reject for CustomError {}
 
 // HANDLERS:
 
@@ -12,7 +16,9 @@ pub async fn handler_get_counter(
     id: i64,
     db_pool: SqlitePool,
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    let counter = db::get_counter(&db_pool, id).await.unwrap();
+    let counter = db::get_counter(&db_pool, id)
+        .await
+        .map_err(|e| CustomError(e.to_string()))?;
     Ok(warp::reply::json(&counter))
 }
 
@@ -33,7 +39,9 @@ pub async fn handler_new_counter(db_pool: SqlitePool) -> Result<impl warp::Reply
         id: latest_counter.id + 1,
         count: 0,
     };
-    db::insert_counter(&db_pool, &counter).await.unwrap();
+    db::insert_counter(&db_pool, &counter)
+        .await
+        .map_err(|e| CustomError(e.to_string()))?;
     Ok(warp::reply::json(&counter.id))
 }
 
@@ -49,27 +57,32 @@ pub async fn handler_incr_counter(
     // TODO work with an actual POD
 
     // update db value TODO do this in a single db operation
-    let counter = db::get_counter(&db_pool, id).await.unwrap();
+    let counter = db::get_counter(&db_pool, id)
+        .await
+        .map_err(|e| CustomError(e.to_string()))?;
     db::update_count(&db_pool, id, counter.count + count)
         .await
-        .unwrap();
+        .map_err(|e| CustomError(e.to_string()))?;
 
     // the next block of code is temporal, generates a plonky2 proof to simulate
     // the rest of the flow. To be replaced by actual POD proofs
-    let (vd, ccd, p) = crate::pod::simple_circuit().unwrap();
+    let (vd, ccd, p) = crate::pod::simple_circuit().map_err(|e| CustomError(e.to_string()))?;
     dbg!("simple_circuit proof generated");
     let (verifier_data, common_circuit_data, proof_with_pis) =
-        crate::pod::shrink_proof(vd.verifier_only, ccd, p).unwrap();
+        crate::pod::shrink_proof(vd.verifier_only, ccd, p)
+            .map_err(|e| CustomError(e.to_string()))?;
     dbg!("shrink_proof done");
     let compressed_proof = proof_with_pis
         .compress(
             &verifier_data.verifier_only.circuit_digest,
             &common_circuit_data.common,
         )
-        .unwrap();
+        .map_err(|e| CustomError(e.to_string()))?;
     let proof_bytes = compressed_proof.to_bytes();
 
-    let tx_hash = crate::eth::send_pod_proof(cfg, proof_bytes).await.unwrap();
+    let tx_hash = crate::eth::send_pod_proof(cfg, proof_bytes)
+        .await
+        .map_err(|e| CustomError(e.to_string()))?;
     Ok(warp::reply::json(&tx_hash))
 }
 

@@ -37,7 +37,7 @@ pub fn compute_pod_proof() -> Result<pod2::frontend::MainPod> {
     builder.pub_op(Operation::set_contains(set, 1))?;
 
     let prover = Prover {};
-    let pod = builder.prove(&prover).unwrap();
+    let pod = builder.prove(&prover)?;
     Ok(pod)
 }
 

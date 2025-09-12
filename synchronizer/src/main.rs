@@ -1,3 +1,4 @@
+#![allow(clippy::uninlined_format_args)]
 use std::{str::FromStr, time::Duration};
 
 use alloy::{
@@ -168,7 +169,7 @@ impl Node {
     async fn db_add_visited_slot(&self, slot: i64) -> Result<()> {
         let mut tx = self.db.begin().await?;
         sqlx::query("INSERT INTO visited_slot (slot) VALUES (?)")
-            .bind(&slot)
+            .bind(slot)
             .execute(&mut *tx)
             .await?;
         tx.commit().await?;
