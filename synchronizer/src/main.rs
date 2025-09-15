@@ -688,7 +688,7 @@ impl Node {
         let sts_hash = calculate_statements_hash(&[st.into()], &self.params);
         let public_inputs = [sts_hash.0, ad.vds_root.0.0].concat();
         let proof_with_pis = CompressedProofWithPublicInputs {
-            proof: payload.shrinked_main_pod_proof,
+            proof: payload.shrunk_main_pod_proof,
             public_inputs,
         };
         let proof = proof_with_pis

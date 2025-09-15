@@ -94,12 +94,12 @@ impl Payload {
         if magic != PAYLOAD_MAGIC {
             return Err(anyhow!("Invalid payload magic: {:04x}", magic));
         }
-        let typ = {
+        let type_ = {
             let mut buffer = [0; 1];
             bytes.read_exact(&mut buffer)?;
             u8::from_le_bytes(buffer)
         };
-        Ok(match typ {
+        Ok(match type_ {
             PAYLOAD_TYPE_INIT => Payload::Init(PayloadInit::from_bytes(bytes)?),
             PAYLOAD_TYPE_UPDATE => Payload::Update(PayloadUpdate::from_bytes(bytes, common_data)?),
             t => return Err(anyhow!("Invalid payload type: {}", t)),
@@ -141,7 +141,7 @@ impl PayloadInit {
 #[derive(Debug)]
 pub struct PayloadUpdate {
     pub id: Hash,
-    pub shrinked_main_pod_proof: CompressedProof<F, C, D>,
+    pub shrunk_main_pod_proof: CompressedProof<F, C, D>,
     pub new_state: RawValue,
 }
 
@@ -150,7 +150,7 @@ impl PayloadUpdate {
         write_elems(buffer, &self.id.0);
         plonky2::util::serialization::Write::write_compressed_proof(
             buffer,
-            &self.shrinked_main_pod_proof,
+            &self.shrunk_main_pod_proof,
         )
         .expect("vec write");
         write_elems(buffer, &self.new_state.0);
@@ -159,7 +159,7 @@ impl PayloadUpdate {
     pub fn from_bytes(bytes: &[u8], common_data: &CommonCircuitData) -> Result<Self> {
         let mut bytes = bytes;
         let id = Hash(read_elems(&mut bytes)?);
-        let shrinked_main_pod_proof = {
+        let shrunk_main_pod_proof = {
             let mut buffer = Buffer::new(bytes);
             let proof =
                 plonky2::util::serialization::Read::read_compressed_proof(&mut buffer, common_data)
@@ -171,7 +171,7 @@ impl PayloadUpdate {
         let new_state = RawValue(read_elems(&mut bytes)?);
         Ok(Self {
             id,
-            shrinked_main_pod_proof,
+            shrunk_main_pod_proof,
             new_state,
         })
     }
