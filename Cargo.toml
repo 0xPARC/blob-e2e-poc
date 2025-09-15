@@ -22,7 +22,8 @@ log = { version = "0.4.14", features = ["kv_unstable"] }
 dotenvy = "0.15.7"
 anyhow = "1.0.56"
 sqlx = { version="0.8.6", features = ["sqlite", "chrono", "runtime-tokio"] }
-
+warp = "0.3"
+hex = "0.4.3"
 
 # [patch."https://github.com/0xPARC/pod2"]
 # pod2 = { git="https://github.com/0xPARC/pod2?rev=main", rev = "021ccaeaa8693dec7b9538aad03931c85a83c191" }

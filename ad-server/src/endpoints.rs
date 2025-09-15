@@ -1,13 +1,8 @@
 use sqlx::SqlitePool;
 use warp::Filter;
+use common::CustomError;
 
 use crate::{Config, db};
-
-/// struct used to convert sqlx errors to warp errors
-#[allow(dead_code)]
-#[derive(Debug)]
-struct CustomError(String);
-impl warp::reject::Reject for CustomError {}
 
 // HANDLERS:
 

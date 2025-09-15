@@ -1425,6 +1425,7 @@ dependencies = [
  "dotenvy",
  "log",
  "sqlx",
+ "warp",
 ]
 
 [[package]]
@@ -5267,6 +5268,7 @@ dependencies = [
  "blob-indexer",
  "common",
  "dotenvy",
+ "hex",
  "log",
  "plonky2",
  "pod2",
@@ -5281,6 +5283,7 @@ dependencies = [
  "tracing-log 0.1.4",
  "tracing-subscriber",
  "url",
+ "warp",
 ]
 
 [[package]]
