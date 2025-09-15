@@ -1,6 +1,6 @@
+use common::CustomError;
 use sqlx::SqlitePool;
 use warp::Filter;
-use common::CustomError;
 
 use crate::{Config, db};
 
