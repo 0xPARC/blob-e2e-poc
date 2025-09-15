@@ -14,7 +14,7 @@ use plonky2::{
             VerifierOnlyCircuitData,
         },
         config::GenericConfig,
-        proof::ProofWithPublicInputs,
+        proof::{CompressedProof, ProofWithPublicInputs},
     },
 };
 use pod2::{
@@ -41,8 +41,31 @@ pub fn compute_pod_proof() -> Result<pod2::frontend::MainPod> {
     Ok(pod)
 }
 
-/// returns a compressed proof for the given MainPod
-pub fn compress_pod(pod: pod2::frontend::MainPod) -> Result<Vec<u8>> {
+/// returns a compressed proof (without public inputs) for the given MainPod
+pub fn compress_pod(pod: pod2::frontend::MainPod) -> Result<CompressedProof<F, C, D>> {
+    // generate new plonky2 proof from POD's proof. This is 1 extra recursion in
+    // order to shrink the proof size, together with removing extra custom gates
+    let start = Instant::now();
+    let (verifier_data, common_circuit_data, proof_with_pis) = prove_pod(pod)?;
+    println!("[TIME] plonky2 (wrapper) proof took: {:?}", start.elapsed());
+
+    // this next line performs the method `fri_query_indices`, which is not exposed
+    let indices = proof_with_pis
+        .get_challenges(
+            proof_with_pis.get_public_inputs_hash(),
+            &verifier_data.verifier_only.circuit_digest,
+            &common_circuit_data.common,
+        )?
+        .fri_challenges
+        .fri_query_indices;
+    let compressed_proof = proof_with_pis
+        .proof
+        .compress(&indices, &common_circuit_data.common.fri_params);
+    Ok(compressed_proof)
+}
+
+/// returns a compressed proof with public inputs for the given MainPod
+pub fn compress_pod_with_pis(pod: pod2::frontend::MainPod) -> Result<Vec<u8>> {
     // generate new plonky2 proof from POD's proof. This is 1 extra recursion in
     // order to shrink the proof size, together with removing extra custom gates
     let start = Instant::now();
