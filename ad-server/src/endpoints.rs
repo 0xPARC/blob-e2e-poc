@@ -1,15 +1,10 @@
 use app::{DEPTH, Helper};
+use common::CustomError;
 use pod2::{backends::plonky2::mainpod::Prover, dict, frontend::MainPodBuilder};
 use sqlx::SqlitePool;
 use warp::Filter;
 
 use crate::{Config, PodConfig, db, pod::compress_pod};
-
-/// struct used to convert sqlx errors to warp errors
-#[allow(dead_code)]
-#[derive(Debug)]
-struct CustomError(String);
-impl warp::reject::Reject for CustomError {}
 
 // HANDLERS:
 

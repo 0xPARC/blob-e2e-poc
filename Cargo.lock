@@ -1425,7 +1425,10 @@ dependencies = [
  "anyhow",
  "dotenvy",
  "log",
+ "plonky2",
+ "pod2",
  "sqlx",
+ "warp",
 ]
 
 [[package]]
@@ -3744,7 +3747,7 @@ source = "git+https://github.com/0xPARC/plonky2.git?rev=767a098d89b8d50d8aacfdce
 [[package]]
 name = "pod2"
 version = "0.1.0"
-source = "git+https://github.com/0xPARC/pod2?rev=1d14338351029a4c2cc0d46914e3bcd580e1b92f#1d14338351029a4c2cc0d46914e3bcd580e1b92f"
+source = "git+https://github.com/0xPARC/pod2?rev=59ec06a72f658606a068755927fa751501f04ce5#59ec06a72f658606a068755927fa751501f04ce5"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -5268,6 +5271,7 @@ dependencies = [
  "blob-indexer",
  "common",
  "dotenvy",
+ "hex",
  "log",
  "plonky2",
  "pod2",
@@ -5282,6 +5286,7 @@ dependencies = [
  "tracing-log 0.1.4",
  "tracing-subscriber",
  "url",
+ "warp",
 ]
 
 [[package]]

@@ -13,6 +13,8 @@ dotenvy = { workspace = true }
 anyhow = { workspace = true }
 sqlx = { workspace = true }
 log = { workspace = true }
+warp = { workspace = true }
+hex = { workspace = true }
 
 common = { path = "../common" }
 
