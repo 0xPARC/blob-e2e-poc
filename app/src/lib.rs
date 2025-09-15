@@ -22,20 +22,20 @@ pub fn build_predicates(params: &Params) -> Predicates {
     let input = r#"
         inc(new, old, op) = AND(
             // Input validation
-            DictContains(?op, "name", "inc")
-            Lt(?op["n"], 10)
+            DictContains(op, "name", "inc")
+            Lt(op.n, 10)
             // State transition
-            SumOf(?new, ?old, ?op["n"])
+            SumOf(new, old, op.n)
         )
 
         update(new, old) = OR(
-            Equal(?new, ?old) // base
-            update_loop(?new, ?old) // recurse
+            Equal(new, old) // base
+            update_loop(new, old) // recurse
         )
 
         update_loop(new, old, private: int, op) = AND(
-            update(?int, ?old)
-            inc(?new, ?int, ?op)
+            update(int, old)
+            inc(new, int, op)
         )
     "#;
 
