@@ -11,9 +11,7 @@ use anyhow::{Context, Result, anyhow};
 use backoff::ExponentialBackoffBuilder;
 use common::{
     load_dotenv,
-    payload::{
-        Payload, PayloadInit, PayloadUpdate, read_custom_predicate_ref, write_custom_redicate_ref,
-    },
+    payload::{Payload, PayloadInit, PayloadUpdate},
 };
 use plonky2::plonk::{
     circuit_builder::CircuitBuilder, circuit_data::CircuitConfig, config::GenericConfig,
@@ -23,13 +21,15 @@ use pod2::{
     backends::plonky2::{
         mainpod::{
             cache_get_rec_main_pod_common_circuit_data,
-            cache_get_rec_main_pod_verifier_circuit_data,
+            cache_get_rec_main_pod_verifier_circuit_data, calculate_statements_hash,
         },
         serialization::{CommonCircuitDataSerializer, VerifierCircuitDataSerializer},
     },
     cache,
     cache::CacheEntry,
-    middleware::{C, CommonCircuitData, D, F, Hash, Params, RawValue, VerifierCircuitData},
+    middleware::{
+        C, CommonCircuitData, D, Hash, Params, RawValue, Statement, Value, VerifierCircuitData,
+    },
 };
 use sqlx::{SqlitePool, migrate::MigrateDatabase, sqlite::Sqlite};
 use synchronizer::{
@@ -44,8 +44,6 @@ use tracing::{debug, info};
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
 pub mod endpoints;
-
-const AD_TEST_ID: Hash = Hash([F(1), F(2), F(3), F(4)]);
 
 type B256 = [u8; 32];
 
@@ -222,6 +220,7 @@ pub mod tables {
         pub num: i64,
         #[sqlx(try_from = "Vec<u8>")]
         pub state: RawValueSql,
+        #[sqlx(try_from = "Vec<u8>")]
         pub blob_versioned_hash: B256,
     }
 
@@ -310,6 +309,15 @@ impl Node {
             .bind(HashSql(ad_id).to_bytes())
             .fetch_one(&self.db)
             .await?)
+    }
+
+    async fn db_get_ad_update_last(&self, ad_id: Hash) -> Result<tables::AdUpdate> {
+        Ok(
+            sqlx::query_as("SELECT * FROM ad_update WHERE id = ? ORDER BY num DESC LIMIT 1")
+                .bind(HashSql(ad_id).to_bytes())
+                .fetch_one(&self.db)
+                .await?,
+        )
     }
 
     async fn db_get_ad_update_last_state(&self, ad_id: Hash) -> Result<RawValue> {
@@ -571,7 +579,7 @@ impl Node {
             .map(|blob| kzg_to_versioned_hash(blob.kzg_commitment.as_ref()))
             .collect();
 
-        for (tx_index, tx) in indexed_blob_txs {
+        for (_tx_index, tx) in indexed_blob_txs {
             let tx = tx.as_recovered();
             let hash = tx.hash();
             let from = tx.signer();
@@ -597,29 +605,25 @@ impl Node {
                     info!("Found AD blob");
                     match self.process_ad_blob(blob).await {
                         Ok(_) => {
-                            info!("MainPod verified!");
-                            // TODO
-                            // let update = tables::AdUpdate {
-                            //     id: AD_TEST_ID.to_vec(),
-                            //     num: 0,
-                            //     slot: slot as i64,
-                            //     tx_index: tx_index as i64,
-                            //     blob_index: *blob_index as i64,
-                            //     update_index: 0,
-                            //     timestamp: execution_block.header.timestamp as i64,
-                            //     state: vec![4, 5, 6, 7, 8],
-                            // };
-                            // self.db_add_ad_update(&update).await?;
-                            // Just for testing
-                            let ad_id = AD_TEST_ID;
-                            let state = self.db_get_ad_update_last_state(ad_id).await?;
-                            info!("State of id={:?} is {:?}", ad_id, state);
+                            info!(
+                                "Valid ad_blob at slot {}, blob_index {}!",
+                                slot, *blob_index
+                            );
                         }
                         Err(e) => {
                             debug!("Invalid ad_blob: {:?}", e);
                             continue;
                         }
                     };
+
+                    self.db_add_blob(&tables::Blob {
+                        versioned_hash: kzg_to_versioned_hash(blob.kzg_commitment.as_ref()).0,
+                        slot: slot as i64,
+                        block: execution_block.header.number as i64,
+                        blob_index: *blob_index as i64,
+                        timestamp: execution_block.header.timestamp as i64,
+                    })
+                    .await?;
                 }
             }
         }
@@ -672,22 +676,37 @@ impl Node {
 
     async fn process_payload_update(&self, blob: &Blob, payload: PayloadUpdate) -> Result<()> {
         let ad = self.db_get_ad(payload.id).await?;
-        let state = self.db_get_ad_update_last_state(payload.id).await?;
+        let ad_update_last = self.db_get_ad_update_last(payload.id).await?;
 
-        let proof = payload
-            .shrinked_main_pod_proof
+        let st = Statement::Custom(
+            ad.custom_predicate_ref.0,
+            vec![
+                Value::from(payload.new_state),
+                Value::from(ad_update_last.state.0),
+            ],
+        );
+        let sts_hash = calculate_statements_hash(&[st.into()], &self.params);
+        let public_inputs = [sts_hash.0, ad.vds_root.0.0].concat();
+        let proof_with_pis = CompressedProofWithPublicInputs {
+            proof: payload.shrinked_main_pod_proof,
+            public_inputs,
+        };
+        let proof = proof_with_pis
             .decompress(
                 &self.verifier_circuit_data.verifier_only.circuit_digest,
                 &self.common_circuit_data,
             )
             .context("CompressedProofWithPublicInputs::decompress")?;
-        // let proof = CompressedProofWithPublicInputs::<_, C, D>::from_bytes(
-        //     bytes,
-        //     &self.common_circuit_data,
-        // )
-        // .context("CompressedProofWithPublicInputs::from_bytes")?
-        // .context("CompressedProofWithPublicInputs::decompress")?;
-        // self.verifier_circuit_data.verify(proof)
+        self.verifier_circuit_data.verify(proof)?;
+
+        let blob_versioned_hash = kzg_to_versioned_hash(blob.kzg_commitment.as_ref()).0;
+        let ad_update = tables::AdUpdate {
+            id: HashSql(payload.id),
+            num: ad_update_last.num + 1,
+            state: RawValueSql(payload.new_state),
+            blob_versioned_hash,
+        };
+        self.db_add_ad_update(&ad_update).await
     }
 }
 
