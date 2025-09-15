@@ -3682,7 +3682,6 @@ dependencies = [
 [[package]]
 name = "plonky2"
 version = "1.1.0"
-source = "git+https://github.com/0xPARC/plonky2.git?rev=767a098d89b8d50d8aacfdce0c0a7222e8760d37#767a098d89b8d50d8aacfdce0c0a7222e8760d37"
 dependencies = [
  "ahash",
  "anyhow",
@@ -3691,6 +3690,7 @@ dependencies = [
  "hashbrown 0.14.5",
  "itertools 0.11.0",
  "keccak-hash",
+ "lazy_static",
  "log",
  "num",
  "plonky2_field",
@@ -3708,7 +3708,6 @@ dependencies = [
 [[package]]
 name = "plonky2_field"
 version = "1.0.0"
-source = "git+https://github.com/0xPARC/plonky2.git?rev=767a098d89b8d50d8aacfdce0c0a7222e8760d37#767a098d89b8d50d8aacfdce0c0a7222e8760d37"
 dependencies = [
  "anyhow",
  "itertools 0.11.0",
@@ -3723,7 +3722,6 @@ dependencies = [
 [[package]]
 name = "plonky2_maybe_rayon"
 version = "1.0.0"
-source = "git+https://github.com/0xPARC/plonky2.git?rev=767a098d89b8d50d8aacfdce0c0a7222e8760d37#767a098d89b8d50d8aacfdce0c0a7222e8760d37"
 dependencies = [
  "rayon",
 ]
@@ -3742,7 +3740,6 @@ dependencies = [
 [[package]]
 name = "plonky2_util"
 version = "1.0.0"
-source = "git+https://github.com/0xPARC/plonky2.git?rev=767a098d89b8d50d8aacfdce0c0a7222e8760d37#767a098d89b8d50d8aacfdce0c0a7222e8760d37"
 
 [[package]]
 name = "pod2"
