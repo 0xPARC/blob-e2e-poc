@@ -21,6 +21,7 @@ pub fn write_elems<const N: usize>(bytes: &mut Vec<u8>, elems: &[F; N]) {
 pub fn read_elems<const N: usize>(bytes: &mut impl Read) -> Result<[F; N]> {
     let mut elems = [F::ZERO; N];
     let mut elem_bytes = [0; 8];
+    #[allow(clippy::needless_range_loop)]
     for i in 0..N {
         bytes.read_exact(&mut elem_bytes)?;
         let n = u64::from_le_bytes(elem_bytes);
@@ -52,6 +53,7 @@ pub fn read_custom_predicate_ref(bytes: &mut impl Read) -> Result<CustomPredicat
     })
 }
 
+#[allow(clippy::large_enum_variant)]
 pub enum Payload {
     Init(PayloadInit),
     Update(PayloadUpdate),
