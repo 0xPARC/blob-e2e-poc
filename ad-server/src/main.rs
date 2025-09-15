@@ -42,9 +42,8 @@ impl Config {
     }
 }
 
-// TODO rename
 #[derive(Debug, Clone)]
-pub struct PodObjs {
+pub struct PodConfig {
     params: Params,
     vd_set: VDSet,
     predicates: Predicates,
@@ -69,13 +68,13 @@ async fn main() -> Result<()> {
     let vd_set = &*DEFAULT_VD_SET;
     println!("vd_set calculation complete");
     let predicates = build_predicates(&params);
-    let pod_objs = PodObjs {
+    let pod_config = PodConfig {
         params,
         vd_set: vd_set.clone(),
         predicates,
     };
 
-    let routes = endpoints::routes(cfg, db_pool, pod_objs);
+    let routes = endpoints::routes(cfg, db_pool, pod_config);
     println!("server at http://0.0.0.0:8000");
     warp::serve(routes).run(([0, 0, 0, 0], 8000)).await;
 
