@@ -4,9 +4,9 @@ use sqlx::{FromRow, SqlitePool};
 
 #[derive(Debug, FromRow, Serialize, Deserialize)]
 pub struct Counter {
-    pub id: i64, // TODO maybe use u64 (check db compat)
+    pub id: i64, // maybe use u64 (check db compat)
     pub count: i64,
-    // pod, proof, etc
+    // maybe store also: pod, proof, etc
 }
 
 pub async fn init_db(db_pool: &SqlitePool) -> Result<(), sqlx::Error> {
@@ -50,4 +50,20 @@ pub async fn update_count(pool: &SqlitePool, id: i64, new_count: i64) -> Result<
         .execute(pool)
         .await?;
     Ok(())
+}
+
+pub async fn increment_counter(
+    pool: &SqlitePool,
+    id: i64,
+    delta: i64,
+) -> Result<Counter, sqlx::Error> {
+    let counter = sqlx::query_as::<_, Counter>(
+        "UPDATE counters SET count = count + ? WHERE id = ? RETURNING id, count;",
+    )
+    .bind(delta)
+    .bind(id)
+    .fetch_one(pool)
+    .await?;
+
+    Ok(counter)
 }

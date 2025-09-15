@@ -1,6 +1,6 @@
 #![allow(clippy::type_complexity)]
 
-use std::{fs, io::Write, ops::Deref, time::Instant};
+use std::{ops::Deref, time::Instant};
 
 use anyhow::Result;
 use itertools::Itertools;
@@ -55,9 +55,6 @@ pub fn compress_pod(pod: pod2::frontend::MainPod) -> Result<Vec<u8>> {
         &common_circuit_data.common,
     )?;
     let compressed_proof_pis_bytes = compressed_proof.to_bytes();
-    // store it in a file just in case we want to check it later
-    let mut file = fs::File::create("proof_with_public_inputs.bin")?;
-    file.write_all(&compressed_proof_pis_bytes)?;
     dbg!(&compressed_proof_pis_bytes.len());
 
     println!(

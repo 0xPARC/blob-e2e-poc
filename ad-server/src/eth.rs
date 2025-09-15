@@ -7,7 +7,7 @@ use alloy::{
     rpc::types::TransactionRequest,
     signers::local::PrivateKeySigner,
 };
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 
 use crate::Config;
 
@@ -50,14 +50,31 @@ pub async fn send_pod_proof(cfg: Config, compressed_proof_bytes: Vec<u8>) -> Res
         receipt.block_number.expect("Failed to get block number")
     );
 
-    assert_eq!(receipt.from, sender);
-    assert_eq!(receipt.to, Some(receiver));
-    assert_eq!(
-        receipt
-            .blob_gas_used
-            .expect("Expected to be EIP-4844 transaction"),
-        DATA_GAS_PER_BLOB
-    );
+    if receipt.from != sender {
+        return Err(anyhow!(
+            "receipt.from: {} != sender: {}",
+            receipt.from,
+            sender
+        ));
+    }
+    let receipt_to = receipt.to.ok_or(anyhow!("expected receipt.to"))?;
+    if receipt_to != receiver {
+        return Err(anyhow!(
+            "receipt.to: {} != receiver: {}",
+            receipt_to,
+            receiver
+        ));
+    }
+    let blob_gas_used = receipt
+        .blob_gas_used
+        .ok_or(anyhow!("expected EIP-4844 tx"))?;
+    if blob_gas_used != DATA_GAS_PER_BLOB {
+        return Err(anyhow!(
+            "blob_gas_used: {} != DATA_GAS_PER_BLOB: {}",
+            blob_gas_used,
+            DATA_GAS_PER_BLOB
+        ));
+    }
 
     Ok(tx_hash)
 }
