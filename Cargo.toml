@@ -16,7 +16,7 @@ alloy = { version = "1.0.13", features = [
 ] }
 tokio = {version="1.45", features = ["rt-multi-thread", "macros"]}
 plonky2 = { git = "https://github.com/0xPARC/plonky2.git", rev = "767a098d89b8d50d8aacfdce0c0a7222e8760d37" }
-pod2 = { git="https://github.com/0xPARC/pod2", rev = "021ccaeaa8693dec7b9538aad03931c85a83c191", default-features = false, features = ["backend_plonky2", "disk_cache", "zk"]}
+pod2 = { git="https://github.com/0xPARC/pod2", rev = "1d14338351029a4c2cc0d46914e3bcd580e1b92f", default-features = false, features = ["backend_plonky2", "disk_cache", "zk"]}
 env_logger = { version = "0.11" }
 log = { version = "0.4.14", features = ["kv_unstable"] }
 dotenvy = "0.15.7"
