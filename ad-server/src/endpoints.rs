@@ -62,13 +62,13 @@ pub async fn handler_incr_counter(
         ))));
     }
 
-    // update db value, and get the new counter
-    let updated_counter = db::increment_counter(&db_pool, id, count)
+    // get counter from db
+    let counter = db::get_counter(&db_pool, id)
         .await
         .map_err(|e| CustomError(e.to_string()))?;
 
     // with the actual POD
-    let state = updated_counter.count - count;
+    let state = counter.count;
 
     let start = std::time::Instant::now();
 
@@ -83,11 +83,14 @@ pub async fn handler_incr_counter(
     // sanity check
     println!("counter old state: {}", state);
     println!("counter new state: {new_state}");
-    if new_state != updated_counter.count {
-        return Err(warp::reject::custom(CustomError(format!(
-            "new_state: {} != updated_counter.count: {}",
-            new_state, updated_counter.count
-        ))));
+    if new_state != counter.count + count {
+        // if we're inside this if, means that the pod2 lib has done something
+        // wrong, hence, trigger a panic so that we notice it
+        panic!(
+            "new_state: {} != counter.count+count: {}",
+            new_state,
+            counter.count + count
+        );
     }
 
     let prover = Prover {};
@@ -101,6 +104,11 @@ pub async fn handler_incr_counter(
     let tx_hash = crate::eth::send_pod_proof(cfg, proof_bytes)
         .await
         .map_err(|e| CustomError(e.to_string()))?;
+
+    db::update_count(&db_pool, id, counter.count + count)
+        .await
+        .map_err(|e| CustomError(e.to_string()))?;
+
     Ok(warp::reply::json(&tx_hash))
 }
 
