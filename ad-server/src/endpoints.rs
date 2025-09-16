@@ -237,6 +237,7 @@ fn with_shrunk_main_pod_build(
 
 #[cfg(test)]
 mod tests {
+    use common::circuits::ShrunkMainPodSetup;
     use pod2::{backends::plonky2::basetypes::DEFAULT_VD_SET, middleware::Params};
     use warp::http::StatusCode;
 
@@ -263,13 +264,14 @@ mod tests {
         let vd_set = &*DEFAULT_VD_SET;
         println!("vd_set calculation complete");
         let predicates = app::build_predicates(&params);
+        let shrunk_main_pod_build = Arc::new(ShrunkMainPodSetup::new(&params).build());
         let pod_config = PodConfig {
             params,
             vd_set: vd_set.clone(),
             predicates,
         };
 
-        let api = routes(cfg, db_pool, pod_config);
+        let api = routes(cfg, db_pool, pod_config, shrunk_main_pod_build);
 
         // set new counter
         let res = warp::test::request()

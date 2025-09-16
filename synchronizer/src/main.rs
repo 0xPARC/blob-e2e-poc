@@ -14,22 +14,16 @@ use common::{
     load_dotenv,
     payload::{Payload, PayloadInit, PayloadUpdate},
 };
-use plonky2::plonk::{
-    circuit_builder::CircuitBuilder, circuit_data::CircuitConfig, config::GenericConfig,
-    proof::CompressedProofWithPublicInputs,
-};
+use plonky2::plonk::proof::CompressedProofWithPublicInputs;
 use pod2::{
     backends::plonky2::{
-        mainpod::{
-            cache_get_rec_main_pod_common_circuit_data,
-            cache_get_rec_main_pod_verifier_circuit_data, calculate_statements_hash,
-        },
+        mainpod::calculate_statements_hash,
         serialization::{CommonCircuitDataSerializer, VerifierCircuitDataSerializer},
     },
     cache,
     cache::CacheEntry,
     middleware::{
-        C, CommonCircuitData, D, EMPTY_VALUE, Hash, Params, RawValue, Statement, Value,
+        CommonCircuitData, EMPTY_VALUE, Hash, Params, RawValue, Statement, Value,
         VerifierCircuitData,
     },
 };

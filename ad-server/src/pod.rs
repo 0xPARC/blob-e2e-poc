@@ -1,31 +1,31 @@
 #![allow(clippy::type_complexity)]
 
-use std::{ops::Deref, time::Instant};
-
-use anyhow::Result;
-use common::circuits::{ShrunkMainPodBuild, ShrunkMainPodSetup};
-use itertools::Itertools;
-use plonky2::{
-    field::types::Field,
-    iop::witness::{PartialWitness, WitnessWrite},
-    plonk::{
-        circuit_builder::CircuitBuilder,
-        circuit_data::{
-            CircuitConfig, CircuitData, CommonCircuitData, VerifierCircuitData,
-            VerifierOnlyCircuitData,
-        },
-        config::GenericConfig,
-        proof::{CompressedProof, ProofWithPublicInputs},
-    },
-};
-use pod2::{
-    backends::plonky2::{
-        basetypes::{C, D, DEFAULT_VD_SET, F, Proof},
-        mainpod::Prover,
-    },
-    frontend::{MainPodBuilder, Operation},
-    middleware::{Params, ToFields, containers::Set},
-};
+// use std::{ops::Deref, time::Instant};
+//
+// use anyhow::Result;
+// use common::circuits::{ShrunkMainPodBuild, ShrunkMainPodSetup};
+// use itertools::Itertools;
+// use plonky2::{
+//     field::types::Field,
+//     iop::witness::{PartialWitness, WitnessWrite},
+//     plonk::{
+//         circuit_builder::CircuitBuilder,
+//         circuit_data::{
+//             CircuitConfig, CircuitData, CommonCircuitData, VerifierCircuitData,
+//             VerifierOnlyCircuitData,
+//         },
+//         config::GenericConfig,
+//         proof::{CompressedProof, ProofWithPublicInputs},
+//     },
+// };
+// use pod2::{
+//     backends::plonky2::{
+//         basetypes::{C, D, DEFAULT_VD_SET, F, Proof},
+//         mainpod::Prover,
+//     },
+//     frontend::{MainPodBuilder, Operation},
+//     middleware::{Params, ToFields, containers::Set},
+// };
 
 // // returns a MainPod, example adapted from pod2/examples/main_pod_points.rs
 // pub fn compute_pod_proof() -> Result<pod2::frontend::MainPod> {
