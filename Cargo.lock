@@ -8,6 +8,7 @@ version = "0.1.0"
 dependencies = [
  "alloy",
  "anyhow",
+ "app",
  "common",
  "dotenvy",
  "itertools 0.14.0",
@@ -3744,7 +3745,7 @@ source = "git+https://github.com/0xPARC/plonky2.git?rev=767a098d89b8d50d8aacfdce
 [[package]]
 name = "pod2"
 version = "0.1.0"
-source = "git+https://github.com/0xPARC/pod2?rev=021ccaeaa8693dec7b9538aad03931c85a83c191#021ccaeaa8693dec7b9538aad03931c85a83c191"
+source = "git+https://github.com/0xPARC/pod2?rev=1d14338351029a4c2cc0d46914e3bcd580e1b92f#1d14338351029a4c2cc0d46914e3bcd580e1b92f"
 dependencies = [
  "anyhow",
  "base64 0.22.1",

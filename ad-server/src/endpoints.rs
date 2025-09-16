@@ -1,8 +1,10 @@
+use app::{DEPTH, Helper};
 use common::CustomError;
+use pod2::{backends::plonky2::mainpod::Prover, dict, frontend::MainPodBuilder};
 use sqlx::SqlitePool;
 use warp::Filter;
 
-use crate::{Config, db};
+use crate::{Config, PodConfig, db, pod::compress_pod};
 
 // HANDLERS:
 
@@ -27,7 +29,7 @@ pub async fn handler_new_counter(db_pool: SqlitePool) -> Result<impl warp::Reply
     {
         Ok(Some(counter)) => counter,
         Ok(None) => db::Counter { id: 0, count: 0 },
-        Err(e) => panic!("TODO {}", e),
+        Err(e) => return Err(warp::reject::custom(CustomError(e.to_string()))),
     };
 
     let counter = db::Counter {
@@ -43,41 +45,65 @@ pub async fn handler_new_counter(db_pool: SqlitePool) -> Result<impl warp::Reply
 // POST /counter/{id}
 pub async fn handler_incr_counter(
     id: i64,
-    count: i64,
+    count: i64, // delta to increment the counter
     cfg: Config,
     db_pool: SqlitePool,
+    pod_config: PodConfig,
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    assert!(count < 10);
+    if count >= 10 {
+        return Err(warp::reject::custom(CustomError(format!(
+            "max count is 9, got count={}",
+            count
+        ))));
+    }
 
-    // TODO work with an actual POD
-
-    // update db value TODO do this in a single db operation
+    // get counter from db
     let counter = db::get_counter(&db_pool, id)
         .await
         .map_err(|e| CustomError(e.to_string()))?;
-    db::update_count(&db_pool, id, counter.count + count)
-        .await
-        .map_err(|e| CustomError(e.to_string()))?;
 
-    // the next block of code is temporal, generates a plonky2 proof to simulate
-    // the rest of the flow. To be replaced by actual POD proofs
-    let (vd, ccd, p) = crate::pod::simple_circuit().map_err(|e| CustomError(e.to_string()))?;
-    dbg!("simple_circuit proof generated");
-    let (verifier_data, common_circuit_data, proof_with_pis) =
-        crate::pod::shrink_proof(vd.verifier_only, ccd, p)
-            .map_err(|e| CustomError(e.to_string()))?;
-    dbg!("shrink_proof done");
-    let compressed_proof = proof_with_pis
-        .compress(
-            &verifier_data.verifier_only.circuit_digest,
-            &common_circuit_data.common,
-        )
-        .map_err(|e| CustomError(e.to_string()))?;
-    let proof_bytes = compressed_proof.to_bytes();
+    // with the actual POD
+    let state = counter.count;
+
+    let start = std::time::Instant::now();
+
+    let mut builder = MainPodBuilder::new(&pod_config.params, &pod_config.vd_set);
+    let mut helper = Helper::new(&mut builder, &pod_config.predicates);
+
+    let op = dict!(DEPTH, {"name" => "inc", "n" => count}).unwrap();
+
+    let (new_state, st_update) = helper.st_update(state, &[op]);
+    builder.reveal(&st_update);
+
+    // sanity check
+    println!("counter old state: {}", state);
+    println!("counter new state: {new_state}");
+    if new_state != counter.count + count {
+        // if we're inside this if, means that the pod2 lib has done something
+        // wrong, hence, trigger a panic so that we notice it
+        panic!(
+            "new_state: {} != counter.count+count: {}",
+            new_state,
+            counter.count + count
+        );
+    }
+
+    let prover = Prover {};
+    let pod = builder.prove(&prover).unwrap();
+    println!("# pod\n:{}", pod);
+    pod.pod.verify().unwrap();
+
+    let proof_bytes = compress_pod(pod).unwrap();
+    println!("[TIME] incr_counter pod {:?}", start.elapsed());
 
     let tx_hash = crate::eth::send_pod_proof(cfg, proof_bytes)
         .await
         .map_err(|e| CustomError(e.to_string()))?;
+
+    db::update_count(&db_pool, id, counter.count + count)
+        .await
+        .map_err(|e| CustomError(e.to_string()))?;
+
     Ok(warp::reply::json(&tx_hash))
 }
 
@@ -87,10 +113,11 @@ pub async fn handler_incr_counter(
 pub fn routes(
     cfg: Config,
     db_pool: SqlitePool,
+    pod_config: PodConfig,
 ) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
     get_counter(db_pool.clone())
         .or(new_counter(db_pool.clone()))
-        .or(increment_counter(cfg, db_pool.clone()))
+        .or(increment_counter(cfg, db_pool.clone(), pod_config))
 }
 fn get_counter(
     db_pool: SqlitePool,
@@ -115,6 +142,7 @@ fn new_counter(
 fn increment_counter(
     cfg: Config,
     db_pool: SqlitePool,
+    pod_config: PodConfig,
 ) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
     let db_filter = warp::any().map(move || db_pool.clone());
 
@@ -124,6 +152,7 @@ fn increment_counter(
         .and(warp::body::json())
         .and(with_config(cfg))
         .and(db_filter)
+        .and(with_pod_config(pod_config))
         .and_then(handler_incr_counter)
 }
 
@@ -132,9 +161,15 @@ fn with_config(
 ) -> impl Filter<Extract = (Config,), Error = std::convert::Infallible> + Clone {
     warp::any().map(move || cfg.clone())
 }
+fn with_pod_config(
+    pod_config: PodConfig,
+) -> impl Filter<Extract = (PodConfig,), Error = std::convert::Infallible> + Clone {
+    warp::any().map(move || pod_config.clone())
+}
 
 #[cfg(test)]
 mod tests {
+    use pod2::{backends::plonky2::basetypes::DEFAULT_VD_SET, middleware::Params};
     use warp::http::StatusCode;
 
     use super::*;
@@ -154,7 +189,19 @@ mod tests {
             .expect("cannot connect to db");
         db::init_db(&db_pool).await?;
 
-        let api = routes(cfg, db_pool);
+        // initialize pod data
+        let params = Params::default();
+        println!("Prebuilding circuits to calculate vd_set...");
+        let vd_set = &*DEFAULT_VD_SET;
+        println!("vd_set calculation complete");
+        let predicates = app::build_predicates(&params);
+        let pod_config = PodConfig {
+            params,
+            vd_set: vd_set.clone(),
+            predicates,
+        };
+
+        let api = routes(cfg, db_pool, pod_config);
 
         // set new counter
         let res = warp::test::request()
@@ -163,7 +210,7 @@ mod tests {
             .reply(&api)
             .await;
         assert_eq!(res.status(), StatusCode::OK);
-        dbg!(res.body());
+
         let s = std::str::from_utf8(res.body()).expect("Invalid UTF-8");
         let received_id: i64 = s.parse()?;
         assert_eq!(received_id, 1); // counter's id always start at 1
@@ -172,12 +219,12 @@ mod tests {
         let res = warp::test::request()
             .method("POST")
             .path("/counter/1")
-            .json(&1)
+            .json(&3) // increment 3
             .reply(&api)
             .await;
         assert_eq!(res.status(), StatusCode::OK);
 
-        // The body should contain the mocked tx hash
+        // the body should contain the mocked tx hash
         let body: String = serde_json::from_slice(res.body()).unwrap();
         assert_eq!(
             body,
