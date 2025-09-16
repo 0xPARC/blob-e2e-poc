@@ -55,7 +55,7 @@ impl ShrunkMainPodTarget {
         pw: &mut PartialWitness<F>,
         proof_with_public_inputs: &ProofWithPublicInputs,
     ) -> Result<()> {
-        pw.set_proof_with_pis_target(&self.proof_with_pis_target, &proof_with_public_inputs)?;
+        pw.set_proof_with_pis_target(&self.proof_with_pis_target, proof_with_public_inputs)?;
         Ok(())
     }
 }
