@@ -21,8 +21,10 @@
 
 use std::{fmt::Display, str::FromStr};
 
-use reqwest::Url;
-use serde::Deserialize;
+use backoff::ExponentialBackoff;
+use reqwest::{Client, Url};
+use serde::{Deserialize, de::DeserializeOwned};
+use tracing::trace;
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(untagged)]
@@ -134,5 +136,98 @@ impl Display for ErrorResponse {
             self.code,
             self.message.as_deref().unwrap_or(""),
         ))
+    }
+}
+
+pub(crate) async fn json_get<ExpectedResponse: DeserializeOwned>(
+    client: &Client,
+    url: Url,
+    auth_token: Option<&str>,
+    exp_backoff: Option<ExponentialBackoff>,
+) -> Result<ExpectedResponse, ClientError> {
+    let auth_token = auth_token.unwrap_or("");
+    trace!(
+        method = "GET",
+        url = url.clone().as_str(),
+        "Dispatching API request"
+    );
+
+    let mut req = client.get(url.clone());
+
+    if !auth_token.is_empty() {
+        req = req.bearer_auth(auth_token);
+    }
+
+    let resp = if let Some(e) = exp_backoff {
+        match backoff::future::retry_notify(
+            e,
+            || {
+                let req = req.try_clone().unwrap();
+
+                async move { req.send().await.map_err(|err| err.into()) }
+            },
+            |error, duration: std::time::Duration| {
+                let duration = duration.as_secs();
+
+                tracing::warn!(
+                    method = "GET",
+                    url = %url,
+                    ?error,
+                    "Failed to send request. Retrying in {duration} seconds…"
+                );
+            },
+        )
+        .await
+        {
+            Ok(resp) => resp,
+            Err(error) => {
+                tracing::warn!(
+                    method = "GET",
+                    url = %url,
+                    ?error,
+                    "Failed to send request. All retries failed"
+                );
+
+                return Err(error.into());
+            }
+        }
+    } else {
+        match req.send().await {
+            Err(error) => {
+                tracing::warn!(
+                    method = "GET",
+                    url = %url,
+                    ?error,
+                    "Failed to send request"
+                );
+
+                return Err(error.into());
+            }
+            Ok(resp) => resp,
+        }
+    };
+
+    let status = resp.status();
+
+    if status.as_u16() == 404 {
+        return Err(ClientError::NotFound(url));
+    };
+
+    let text = resp.text().await?;
+    let result: Result<ClientResponse<ExpectedResponse>, _> =
+        serde_json::from_str(&text).map_err(ClientError::from);
+
+    match result {
+        Err(e) => {
+            tracing::warn!(
+                method = "GET",
+                url = %url,
+                // response = format!("{:?}", text.map(|t| t.as_str())),
+                "Unexpected response from server"
+            );
+
+            Err(e)
+        }
+        Ok(response) => response.into_client_result(),
     }
 }
