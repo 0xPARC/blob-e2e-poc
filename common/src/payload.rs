@@ -25,7 +25,7 @@ pub fn read_elems<const N: usize>(bytes: &mut impl Read) -> Result<[F; N]> {
     for i in 0..N {
         bytes.read_exact(&mut elem_bytes)?;
         let n = u64::from_le_bytes(elem_bytes);
-        if n < F::ORDER {
+        if n >= F::ORDER {
             return Err(anyhow!("{} >= F::ORDER", n));
         }
         elems[i] = F::from_canonical_u64(n);
@@ -33,7 +33,7 @@ pub fn read_elems<const N: usize>(bytes: &mut impl Read) -> Result<[F; N]> {
     Ok(elems)
 }
 
-pub fn write_custom_redicate_ref(bytes: &mut Vec<u8>, cpr: &CustomPredicateRef) {
+pub fn write_custom_predicate_ref(bytes: &mut Vec<u8>, cpr: &CustomPredicateRef) {
     write_elems(bytes, &cpr.batch.id().0);
     bytes
         .write_all(&(cpr.index as u8).to_le_bytes())
@@ -120,7 +120,7 @@ pub struct PayloadInit {
 impl PayloadInit {
     pub fn write_bytes(&self, buffer: &mut Vec<u8>) {
         write_elems(buffer, &self.id.0);
-        write_custom_redicate_ref(buffer, &self.custom_predicate_ref);
+        write_custom_predicate_ref(buffer, &self.custom_predicate_ref);
         write_elems(buffer, &self.vds_root.0);
         write_elems(buffer, &self.state.0);
     }

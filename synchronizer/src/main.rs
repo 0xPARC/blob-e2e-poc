@@ -136,7 +136,7 @@ struct Node {
 pub mod tables {
     use anyhow::Error;
     use common::payload::{
-        read_custom_predicate_ref, read_elems, write_custom_redicate_ref, write_elems,
+        read_custom_predicate_ref, read_elems, write_custom_predicate_ref, write_elems,
     };
     use pod2::middleware::{CustomPredicateRef, Hash, RawValue};
 
@@ -194,7 +194,7 @@ pub mod tables {
     impl CustomPredicateRefSql {
         pub fn to_bytes(&self) -> Vec<u8> {
             let mut buffer = Vec::with_capacity(32);
-            write_custom_redicate_ref(&mut buffer, &self.0);
+            write_custom_predicate_ref(&mut buffer, &self.0);
             buffer
         }
     }
@@ -246,7 +246,7 @@ impl Node {
     async fn db_add_blob(&self, blob: &tables::Blob) -> Result<()> {
         let mut tx = self.db.begin().await?;
         sqlx::query(
-            "INSERT INTO ad (versioned_hash, slot, block, blob_index, timestamp) VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO blob (versioned_hash, slot, block, blob_index, timestamp) VALUES (?, ?, ?, ?, ?)",
         )
         .bind(blob.versioned_hash.as_slice())
         .bind(blob.slot)
@@ -263,7 +263,7 @@ impl Node {
     async fn db_add_ad(&self, ad: &tables::Ad) -> Result<()> {
         let mut tx = self.db.begin().await?;
         sqlx::query(
-            "INSERT INTO ad (id, custom_predicate_ref, vds_root, state, blob_versioned_hash) VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO ad (id, custom_predicate_ref, vds_root, state, blob_versioned_hash) VALUES (?, ?, ?, ?, ?)",
         )
         .bind(ad.id.to_bytes())
         .bind(ad.custom_predicate_ref.to_bytes())
@@ -280,7 +280,7 @@ impl Node {
     async fn db_add_ad_update(&self, update: &tables::AdUpdate) -> Result<()> {
         let mut tx = self.db.begin().await?;
         sqlx::query(
-            "INSERT INTO ad_update (id, num, slot, state, blob_versioned_hash) VALUES (?, ?, ?, ?)",
+            "INSERT INTO ad_update (id, num, state, blob_versioned_hash) VALUES (?, ?, ?, ?)",
         )
         .bind(update.id.to_bytes())
         .bind(update.num)
@@ -379,7 +379,6 @@ impl Node {
                 custom_predicate_ref BLOB NOT NULL,
                 vds_root BLOB NOT NULL,
                 state BLOB NOT NULL,
-
                 blob_versioned_hash BLOB NOT NULL,
 
                 PRIMARY KEY (id, num)
