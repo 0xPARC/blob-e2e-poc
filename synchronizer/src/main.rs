@@ -28,7 +28,8 @@ use pod2::{
     cache,
     cache::CacheEntry,
     middleware::{
-        C, CommonCircuitData, D, Hash, Params, RawValue, Statement, Value, VerifierCircuitData,
+        C, CommonCircuitData, D, EMPTY_VALUE, Hash, Params, RawValue, Statement, Value,
+        VerifierCircuitData,
     },
 };
 use sqlx::{SqlitePool, migrate::MigrateDatabase, sqlite::Sqlite};
@@ -112,7 +113,7 @@ impl Config {
         Ok(Self {
             beacon_url: var("BEACON_URL")?,
             rpc_url: var("RPC_URL")?,
-            sqlite_path: var("SQLITE_PATH")?,
+            sqlite_path: var("SYNCHRONIZER_SQLITE_PATH")?,
             ad_genesis_slot: u32::from_str(&var("AD_GENESIS_SLOT")?)?,
             to_addr: Address::from_str(&var("TO_ADDR")?)?,
             request_rate: u64::from_str(&var("REQUEST_RATE")?)?,
@@ -208,8 +209,6 @@ pub mod tables {
         #[sqlx(try_from = "Vec<u8>")]
         pub vds_root: HashSql,
         #[sqlx(try_from = "Vec<u8>")]
-        pub state: RawValueSql,
-        #[sqlx(try_from = "Vec<u8>")]
         pub blob_versioned_hash: B256,
     }
 
@@ -263,12 +262,11 @@ impl Node {
     async fn db_add_ad(&self, ad: &tables::Ad) -> Result<()> {
         let mut tx = self.db.begin().await?;
         sqlx::query(
-            "INSERT INTO ad (id, custom_predicate_ref, vds_root, state, blob_versioned_hash) VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO ad (id, custom_predicate_ref, vds_root, blob_versioned_hash) VALUES (?, ?, ?, ?)",
         )
         .bind(ad.id.to_bytes())
         .bind(ad.custom_predicate_ref.to_bytes())
         .bind(ad.vds_root.to_bytes())
-        .bind(ad.state.to_bytes())
         .bind(ad.blob_versioned_hash.as_slice())
         .execute(&mut *tx)
         .await?;
@@ -350,7 +348,7 @@ impl Node {
                 slot INTEGER NOT NULL,
                 block INTEGER NOT NULL,
                 blob_index INTEGER NOT NULL,
-                timestamp INTEGER NOT NULL,
+                timestamp INTEGER NOT NULL
             );
             "#,
         )
@@ -375,13 +373,10 @@ impl Node {
         sqlx::query(
             r#"
             CREATE TABLE IF NOT EXISTS ad (
-                id BLOB NOT NULL,
+                id BLOB PRIMARY KEY,
                 custom_predicate_ref BLOB NOT NULL,
                 vds_root BLOB NOT NULL,
-                state BLOB NOT NULL,
-                blob_versioned_hash BLOB NOT NULL,
-
-                PRIMARY KEY (id, num)
+                blob_versioned_hash BLOB NOT NULL
             );
             "#,
         )
@@ -660,14 +655,13 @@ impl Node {
             id: HashSql(payload.id),
             custom_predicate_ref: CustomPredicateRefSql(payload.custom_predicate_ref),
             vds_root: HashSql(payload.vds_root),
-            state: RawValueSql(payload.state),
             blob_versioned_hash,
         };
         self.db_add_ad(&ad).await?;
         let ad_update = tables::AdUpdate {
             id: HashSql(payload.id),
             num: 0,
-            state: RawValueSql(payload.state),
+            state: RawValueSql(EMPTY_VALUE),
             blob_versioned_hash,
         };
         self.db_add_ad_update(&ad_update).await

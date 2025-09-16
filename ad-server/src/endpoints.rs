@@ -1,7 +1,7 @@
 use app::{DEPTH, Helper};
 use common::{
     CustomError,
-    payload::{PayloadInit, PayloadUpdate},
+    payload::{Payload, PayloadInit, PayloadUpdate},
 };
 use pod2::{
     backends::plonky2::mainpod::Prover,
@@ -52,14 +52,12 @@ pub async fn handler_new_counter(
     let new_id = latest_counter.id + 1;
 
     // send the payload to ethereum
-    let mut payload_bytes: Vec<u8> = vec![];
-    PayloadInit {
+    let payload_bytes = Payload::Init(PayloadInit {
         id: Hash::from(RawValue::from(new_id)), // TODO hash
         custom_predicate_ref: pod_config.predicates.update_loop_pred,
         vds_root: pod_config.vd_set.root(),
-        state: RawValue::from(0),
-    }
-    .write_bytes(&mut payload_bytes);
+    })
+    .to_bytes();
 
     let tx_hash = crate::eth::send_payload(cfg, payload_bytes)
         .await
@@ -134,13 +132,12 @@ pub async fn handler_incr_counter(
     let compressed_proof = compress_pod(pod).unwrap();
     println!("[TIME] incr_counter pod {:?}", start.elapsed());
 
-    let mut payload_bytes: Vec<u8> = vec![];
-    PayloadUpdate {
+    let payload_bytes = Payload::Update(PayloadUpdate {
         id: Hash::from(RawValue::from(id)), // TODO hash
         shrunk_main_pod_proof: compressed_proof,
         new_state: RawValue::from(new_state),
-    }
-    .write_bytes(&mut payload_bytes);
+    })
+    .to_bytes();
 
     let tx_hash = crate::eth::send_payload(cfg, payload_bytes)
         .await

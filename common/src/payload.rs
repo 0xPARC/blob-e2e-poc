@@ -114,7 +114,6 @@ pub struct PayloadInit {
     pub id: Hash,
     pub custom_predicate_ref: CustomPredicateRef,
     pub vds_root: Hash,
-    pub state: RawValue,
 }
 
 impl PayloadInit {
@@ -122,7 +121,6 @@ impl PayloadInit {
         write_elems(buffer, &self.id.0);
         write_custom_predicate_ref(buffer, &self.custom_predicate_ref);
         write_elems(buffer, &self.vds_root.0);
-        write_elems(buffer, &self.state.0);
     }
 
     pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
@@ -130,12 +128,10 @@ impl PayloadInit {
         let id = Hash(read_elems(&mut bytes)?);
         let custom_predicate_ref = read_custom_predicate_ref(&mut bytes)?;
         let vds_root = Hash(read_elems(&mut bytes)?);
-        let state = RawValue(read_elems(&mut bytes)?);
         Ok(Self {
             id,
             custom_predicate_ref,
             vds_root,
-            state,
         })
     }
 }
