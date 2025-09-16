@@ -1,6 +1,9 @@
+use std::sync::Arc;
+
 use app::{DEPTH, Helper};
 use common::{
     CustomError,
+    circuits::{ShrunkMainPodBuild, shrink_compress_pod},
     payload::{Payload, PayloadInit, PayloadUpdate},
 };
 use pod2::{
@@ -13,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use warp::Filter;
 
-use crate::{Config, PodConfig, db, pod::compress_pod};
+use crate::{Config, PodConfig, db};
 
 // HANDLERS:
 
@@ -85,6 +88,7 @@ pub async fn handler_incr_counter(
     cfg: Config,
     db_pool: SqlitePool,
     pod_config: PodConfig,
+    shrunk_main_pod_build: Arc<ShrunkMainPodBuild>,
 ) -> Result<impl warp::Reply, warp::Rejection> {
     if count >= 10 {
         return Err(warp::reject::custom(CustomError(format!(
@@ -129,7 +133,7 @@ pub async fn handler_incr_counter(
     println!("# pod\n:{}", pod);
     pod.pod.verify().unwrap();
 
-    let compressed_proof = compress_pod(pod).unwrap();
+    let compressed_proof = shrink_compress_pod(&shrunk_main_pod_build, pod).unwrap();
     println!("[TIME] incr_counter pod {:?}", start.elapsed());
 
     let payload_bytes = Payload::Update(PayloadUpdate {
@@ -157,6 +161,7 @@ pub fn routes(
     cfg: Config,
     db_pool: SqlitePool,
     pod_config: PodConfig,
+    shrunk_main_pod_build: Arc<ShrunkMainPodBuild>,
 ) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
     get_counter(db_pool.clone())
         .or(new_counter(
@@ -164,7 +169,12 @@ pub fn routes(
             db_pool.clone(),
             pod_config.clone(),
         ))
-        .or(increment_counter(cfg, db_pool, pod_config))
+        .or(increment_counter(
+            cfg,
+            db_pool,
+            pod_config,
+            shrunk_main_pod_build,
+        ))
 }
 fn get_counter(
     db_pool: SqlitePool,
@@ -194,6 +204,7 @@ fn increment_counter(
     cfg: Config,
     db_pool: SqlitePool,
     pod_config: PodConfig,
+    shrunk_main_pod_build: Arc<ShrunkMainPodBuild>,
 ) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
     let db_filter = warp::any().map(move || db_pool.clone());
 
@@ -204,6 +215,7 @@ fn increment_counter(
         .and(with_config(cfg))
         .and(db_filter)
         .and(with_pod_config(pod_config))
+        .and(with_shrunk_main_pod_build(shrunk_main_pod_build))
         .and_then(handler_incr_counter)
 }
 
@@ -216,6 +228,11 @@ fn with_pod_config(
     pod_config: PodConfig,
 ) -> impl Filter<Extract = (PodConfig,), Error = std::convert::Infallible> + Clone {
     warp::any().map(move || pod_config.clone())
+}
+fn with_shrunk_main_pod_build(
+    shrunk_main_pod_build: Arc<ShrunkMainPodBuild>,
+) -> impl Filter<Extract = (Arc<ShrunkMainPodBuild>,), Error = std::convert::Infallible> + Clone {
+    warp::any().map(move || shrunk_main_pod_build.clone())
 }
 
 #[cfg(test)]

@@ -10,6 +10,7 @@ use alloy_provider::{Provider, RootProvider};
 use anyhow::{Context, Result, anyhow};
 use backoff::ExponentialBackoffBuilder;
 use common::{
+    circuits::ShrunkMainPodSetup,
     load_dotenv,
     payload::{Payload, PayloadInit, PayloadUpdate},
 };
@@ -48,39 +49,13 @@ pub mod endpoints;
 
 type B256 = [u8; 32];
 
-/// performs 1 level recursion (plonky2) to get rid of extra custom gates and zk
-pub fn shrunk_mainpod_circuit_data(
-    params: &Params,
-) -> Result<(CommonCircuitData, VerifierCircuitData)> {
-    let common_circuit_data = cache_get_rec_main_pod_common_circuit_data(params);
-    let verifier_circuit_data = cache_get_rec_main_pod_verifier_circuit_data(params);
-
-    let config = CircuitConfig::standard_recursion_config();
-    let mut builder: CircuitBuilder<<C as GenericConfig<D>>::F, D> = CircuitBuilder::new(config);
-
-    // create circuit logic
-    let proof_with_pis_target = builder.add_virtual_proof_with_pis(&common_circuit_data);
-    let verifier_circuit_target =
-        builder.constant_verifier_data(&verifier_circuit_data.verifier_only);
-    builder.verify_proof::<C>(
-        &proof_with_pis_target,
-        &verifier_circuit_target,
-        &common_circuit_data,
-    );
-
-    builder.register_public_inputs(&proof_with_pis_target.public_inputs);
-
-    let circuit_data = builder.build::<C>();
-
-    let verifier_data = circuit_data.verifier_data();
-    Ok((circuit_data.common, verifier_data))
-}
-
 pub fn cache_get_shrunk_main_pod_circuit_data(
     params: &Params,
 ) -> CacheEntry<(CommonCircuitDataSerializer, VerifierCircuitDataSerializer)> {
     cache::get("shrunk_main_pod_circuit_data", &params, |params| {
-        let (common, verifier) = shrunk_mainpod_circuit_data(params).expect("build shrunk_mainpod");
+        let shrunk_main_pod_build = ShrunkMainPodSetup::new(params).build();
+        let verifier = shrunk_main_pod_build.circuit_data.verifier_data();
+        let common = shrunk_main_pod_build.circuit_data.common;
         (
             CommonCircuitDataSerializer(common),
             VerifierCircuitDataSerializer(verifier),

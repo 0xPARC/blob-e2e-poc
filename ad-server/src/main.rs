@@ -1,9 +1,10 @@
 #![allow(clippy::uninlined_format_args)]
-use std::str::FromStr;
+use std::{str::FromStr, sync::Arc};
 
 use alloy::primitives::Address;
 use anyhow::{Context, Result};
 use app::{Predicates, build_predicates};
+use common::circuits::ShrunkMainPodSetup;
 use pod2::{
     backends::plonky2::basetypes::DEFAULT_VD_SET,
     middleware::{Params, VDSet},
@@ -68,13 +69,14 @@ async fn main() -> Result<()> {
     let vd_set = &*DEFAULT_VD_SET;
     println!("vd_set calculation complete");
     let predicates = build_predicates(&params);
+    let shrunk_main_pod_build = Arc::new(ShrunkMainPodSetup::new(&params).build());
     let pod_config = PodConfig {
         params,
         vd_set: vd_set.clone(),
         predicates,
     };
 
-    let routes = endpoints::routes(cfg, db_pool, pod_config);
+    let routes = endpoints::routes(cfg, db_pool, pod_config, shrunk_main_pod_build);
     println!("server at http://0.0.0.0:8000");
     warp::serve(routes).run(([0, 0, 0, 0], 8000)).await;
 
