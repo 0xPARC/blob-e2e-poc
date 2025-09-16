@@ -1,5 +1,5 @@
 #![allow(clippy::uninlined_format_args)]
-use std::{str::FromStr, time::Duration};
+use std::{str::FromStr, sync::Arc, time::Duration};
 
 use alloy::{
     consensus::Transaction, eips as alloy_eips, eips::eip4844::kzg_to_versioned_hash,
@@ -739,7 +739,7 @@ async fn main() -> Result<()> {
         std::thread::spawn(move || -> Result<_, std::io::Error> {
             Runtime::new().map(|rt| {
                 rt.block_on(async {
-                    let routes = endpoints::routes(node);
+                    let routes = endpoints::routes(Arc::new(node));
                     warp::serve(routes).run(([0, 0, 0, 0], 8001)).await
                 })
             })
