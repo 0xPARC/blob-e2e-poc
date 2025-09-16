@@ -192,7 +192,7 @@ mod tests {
     fn test_payload_roundtrip() {
         let params = Params::default();
         println!("SrhunkMainPod setup");
-        let shrunk_main_pod_build = ShrunkMainPodSetup::new(&params).build();
+        let shrunk_main_pod_build = ShrunkMainPodSetup::new(&params).build().unwrap();
         let common_data = &shrunk_main_pod_build.circuit_data.common;
         let id = Hash([F(1), F(2), F(3), F(4)]);
         let custom_predicate_ref = CustomPredicateRef {

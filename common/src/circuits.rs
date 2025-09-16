@@ -69,7 +69,7 @@ impl ShrunkMainPodSetup {
         }
     }
 
-    pub fn shrink_mainpod_circuit(
+    pub fn verify_shrunk_mainpod_circuit(
         &self,
         builder: &mut CircuitBuilder,
         shrunk_main_pod: &ShrunkMainPodTarget,
@@ -90,17 +90,18 @@ impl ShrunkMainPodSetup {
         Ok(())
     }
 
-    pub fn build(&self) -> ShrunkMainPodBuild {
+    pub fn build(&self) -> Result<ShrunkMainPodBuild> {
         let config = CircuitConfig::standard_recursion_config();
         let mut builder = CircuitBuilder::new(config);
         let shrunk_main_pod = self.new_virtual(&mut builder);
+        self.verify_shrunk_mainpod_circuit(&mut builder, &shrunk_main_pod)?;
         let circuit_data = builder.build::<C>();
-        ShrunkMainPodBuild {
+        Ok(ShrunkMainPodBuild {
             params: self.params.clone(),
             main_pod_verifier_circuit_data: self.main_pod_verifier_circuit_data.clone(),
             shrunk_main_pod,
             circuit_data,
-        }
+        })
     }
 }
 

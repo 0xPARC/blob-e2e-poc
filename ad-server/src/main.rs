@@ -69,7 +69,7 @@ async fn main() -> Result<()> {
     let vd_set = &*DEFAULT_VD_SET;
     println!("vd_set calculation complete");
     let predicates = build_predicates(&params);
-    let shrunk_main_pod_build = Arc::new(ShrunkMainPodSetup::new(&params).build());
+    let shrunk_main_pod_build = Arc::new(ShrunkMainPodSetup::new(&params).build()?);
     let pod_config = PodConfig {
         params,
         vd_set: vd_set.clone(),

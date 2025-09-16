@@ -47,7 +47,9 @@ pub fn cache_get_shrunk_main_pod_circuit_data(
     params: &Params,
 ) -> CacheEntry<(CommonCircuitDataSerializer, VerifierCircuitDataSerializer)> {
     cache::get("shrunk_main_pod_circuit_data", &params, |params| {
-        let shrunk_main_pod_build = ShrunkMainPodSetup::new(params).build();
+        let shrunk_main_pod_build = ShrunkMainPodSetup::new(params)
+            .build()
+            .expect("successful build");
         let verifier = shrunk_main_pod_build.circuit_data.verifier_data();
         let common = shrunk_main_pod_build.circuit_data.common;
         (
