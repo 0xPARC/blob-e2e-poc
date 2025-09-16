@@ -215,7 +215,7 @@ mod tests {
         let payload_init_decoded = Payload::from_bytes(&payload_init_bytes, common_data).unwrap();
         assert_eq!(payload_init, payload_init_decoded);
 
-        let mut builder = MainPodBuilder::new(&params, &vd_set);
+        let mut builder = MainPodBuilder::new(&params, vd_set);
         let predicates = app::build_predicates(&params);
         let mut helper = app::Helper::new(&mut builder, &predicates);
 
