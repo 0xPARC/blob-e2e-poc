@@ -150,6 +150,7 @@ pub fn shrink_compress_pod(
     // let (verifier_data, common_circuit_data, proof_with_pis) = prove_pod(pod)?;
     println!("[TIME] plonky2 (wrapper) proof took: {:?}", start.elapsed());
 
+    dbg!(&proof_with_pis.public_inputs);
     // this next line performs the method `fri_query_indices`, which is not exposed
     let indices = proof_with_pis
         .get_challenges(
@@ -162,6 +163,7 @@ pub fn shrink_compress_pod(
         )?
         .fri_challenges
         .fri_query_indices;
+    // dbg!(&indices);
     let compressed_proof = proof_with_pis.proof.compress(
         &indices,
         &shrunk_main_pod_build.circuit_data.common.fri_params,

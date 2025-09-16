@@ -212,9 +212,18 @@ pub mod tables {
 
 use tables::{CustomPredicateRefSql, HashSql, RawValueSql};
 
-impl Node {
-    async fn db_add_blob(&self, blob: &tables::Blob) -> Result<()> {
-        let mut tx = self.db.begin().await?;
+struct Database<E>(E);
+
+/// Implementation of database queries that works with transactions and database:
+/// ```
+/// Database(&mut *tx)
+/// Database(&db)
+/// ```
+impl<'a, E> Database<E>
+where
+    E: sqlx::Executor<'a, Database = sqlx::Sqlite>,
+{
+    async fn add_blob(self, blob: &tables::Blob) -> Result<()> {
         sqlx::query(
             "INSERT INTO blob (versioned_hash, slot, block, blob_index, timestamp) VALUES (?, ?, ?, ?, ?)",
         )
@@ -223,15 +232,13 @@ impl Node {
         .bind(blob.block)
         .bind(blob.blob_index)
         .bind(blob.timestamp)
-        .execute(&mut *tx)
+        .execute(self.0)
         .await?;
-        tx.commit().await?;
 
         Ok(())
     }
 
-    async fn db_add_ad(&self, ad: &tables::Ad) -> Result<()> {
-        let mut tx = self.db.begin().await?;
+    async fn add_ad(self, ad: &tables::Ad) -> Result<()> {
         sqlx::query(
             "INSERT INTO ad (id, custom_predicate_ref, vds_root, blob_versioned_hash) VALUES (?, ?, ?, ?)",
         )
@@ -239,15 +246,13 @@ impl Node {
         .bind(ad.custom_predicate_ref.to_bytes())
         .bind(ad.vds_root.to_bytes())
         .bind(ad.blob_versioned_hash.as_slice())
-        .execute(&mut *tx)
+        .execute(self.0)
         .await?;
-        tx.commit().await?;
 
         Ok(())
     }
 
-    async fn db_add_ad_update(&self, update: &tables::AdUpdate) -> Result<()> {
-        let mut tx = self.db.begin().await?;
+    async fn add_ad_update(self, update: &tables::AdUpdate) -> Result<()> {
         sqlx::query(
             "INSERT INTO ad_update (id, num, state, blob_versioned_hash) VALUES (?, ?, ?, ?)",
         )
@@ -255,56 +260,55 @@ impl Node {
         .bind(update.num)
         .bind(update.state.to_bytes())
         .bind(update.blob_versioned_hash.as_slice())
-        .execute(&mut *tx)
+        .execute(self.0)
         .await?;
-        tx.commit().await?;
 
         Ok(())
     }
 
-    async fn db_add_visited_slot(&self, slot: i64) -> Result<()> {
-        let mut tx = self.db.begin().await?;
+    async fn add_visited_slot(self, slot: i64) -> Result<()> {
         sqlx::query("INSERT INTO visited_slot (slot) VALUES (?)")
             .bind(slot)
-            .execute(&mut *tx)
+            .execute(self.0)
             .await?;
-        tx.commit().await?;
 
         Ok(())
     }
 
-    async fn db_get_ad(&self, ad_id: Hash) -> Result<tables::Ad> {
+    async fn get_ad(self, ad_id: Hash) -> Result<tables::Ad> {
         Ok(sqlx::query_as("SELECT * FROM ad WHERE id = ?")
             .bind(HashSql(ad_id).to_bytes())
-            .fetch_one(&self.db)
+            .fetch_one(self.0)
             .await?)
     }
 
-    async fn db_get_ad_update_last(&self, ad_id: Hash) -> Result<tables::AdUpdate> {
+    async fn get_ad_update_last(self, ad_id: Hash) -> Result<tables::AdUpdate> {
         Ok(
             sqlx::query_as("SELECT * FROM ad_update WHERE id = ? ORDER BY num DESC LIMIT 1")
                 .bind(HashSql(ad_id).to_bytes())
-                .fetch_one(&self.db)
+                .fetch_one(self.0)
                 .await?,
         )
     }
 
-    async fn db_get_ad_update_last_state(&self, ad_id: Hash) -> Result<RawValue> {
+    async fn get_ad_update_last_state(self, ad_id: Hash) -> Result<RawValue> {
         let (state,): (Vec<u8>,) =
             sqlx::query_as("SELECT state FROM ad_update WHERE id = ? ORDER BY num DESC LIMIT 1")
                 .bind(HashSql(ad_id).to_bytes())
-                .fetch_one(&self.db)
+                .fetch_one(self.0)
                 .await?;
         Ok(RawValueSql::try_from(state).expect("32 bytes").0)
     }
 
-    async fn db_get_visited_slot_last(&self) -> Result<u32> {
+    async fn get_visited_slot_last(self) -> Result<u32> {
         let (slot,) = sqlx::query_as("SELECT slot FROM visited_slot ORDER BY slot DESC LIMIT 1")
-            .fetch_one(&self.db)
+            .fetch_one(self.0)
             .await?;
         Ok(slot)
     }
+}
 
+impl Node {
     // To dump the formatted table via cli:
     // ```
     // sqlite3 -header -cmd '.mode columns' /tmp/ad-synchronizer.sqlite 'SELECT hex(id), num, slot, tx_index, blob_index, update_index, timestamp, hex(state) FROM ad_update;'
@@ -470,6 +474,7 @@ impl Node {
 
     async fn process_beacon_block_header(
         &self,
+        db_tx: &mut sqlx::SqliteTransaction<'_>,
         beacon_block_header: &BlockHeader,
     ) -> Result<Option<()>> {
         let beacon_block_root = beacon_block_header.root;
@@ -568,7 +573,7 @@ impl Node {
                 for blob_index in tx_blob_indices.iter() {
                     let blob = &blobs[*blob_index];
                     info!("Found AD blob");
-                    match self.process_ad_blob(blob).await {
+                    match self.process_ad_blob(db_tx, blob).await {
                         Ok(_) => {
                             info!(
                                 "Valid ad_blob at slot {}, blob_index {}!",
@@ -581,33 +586,43 @@ impl Node {
                         }
                     };
 
-                    self.db_add_blob(&tables::Blob {
-                        versioned_hash: kzg_to_versioned_hash(blob.kzg_commitment.as_ref()).0,
-                        slot: slot as i64,
-                        block: execution_block.header.number as i64,
-                        blob_index: *blob_index as i64,
-                        timestamp: execution_block.header.timestamp as i64,
-                    })
-                    .await?;
+                    Database(&mut **db_tx)
+                        .add_blob(&tables::Blob {
+                            versioned_hash: kzg_to_versioned_hash(blob.kzg_commitment.as_ref()).0,
+                            slot: slot as i64,
+                            block: execution_block.header.number as i64,
+                            blob_index: *blob_index as i64,
+                            timestamp: execution_block.header.timestamp as i64,
+                        })
+                        .await?;
                 }
             }
         }
         Ok(Some(()))
     }
 
-    async fn process_ad_blob(&self, blob: &Blob) -> Result<()> {
+    async fn process_ad_blob(
+        &self,
+        db_tx: &mut sqlx::SqliteTransaction<'_>,
+        blob: &Blob,
+    ) -> Result<()> {
         let bytes =
             bytes_from_simple_blob(blob.blob.inner()).context("Invalid byte encoding in blob")?;
         let payload = Payload::from_bytes(&bytes, &self.common_circuit_data)?;
 
         match payload {
-            Payload::Init(payload) => self.process_payload_init(blob, payload).await,
-            Payload::Update(payload) => self.process_payload_update(blob, payload).await,
+            Payload::Init(payload) => self.process_payload_init(db_tx, blob, payload).await,
+            Payload::Update(payload) => self.process_payload_update(db_tx, blob, payload).await,
         }
     }
 
-    async fn process_payload_init(&self, blob: &Blob, payload: PayloadInit) -> Result<()> {
-        match self.db_get_ad(payload.id).await {
+    async fn process_payload_init(
+        &self,
+        db_tx: &mut sqlx::SqliteTransaction<'_>,
+        blob: &Blob,
+        payload: PayloadInit,
+    ) -> Result<()> {
+        match Database(&mut **db_tx).get_ad(payload.id).await {
             Err(err) => match err.root_cause().downcast_ref::<sqlx::Error>() {
                 Some(&sqlx::Error::RowNotFound) => {}
                 _ => return Err(err),
@@ -628,19 +643,26 @@ impl Node {
             vds_root: HashSql(payload.vds_root),
             blob_versioned_hash,
         };
-        self.db_add_ad(&ad).await?;
+        Database(&mut **db_tx).add_ad(&ad).await?;
         let ad_update = tables::AdUpdate {
             id: HashSql(payload.id),
             num: 0,
             state: RawValueSql(EMPTY_VALUE),
             blob_versioned_hash,
         };
-        self.db_add_ad_update(&ad_update).await
+        Database(&mut **db_tx).add_ad_update(&ad_update).await
     }
 
-    async fn process_payload_update(&self, blob: &Blob, payload: PayloadUpdate) -> Result<()> {
-        let ad = self.db_get_ad(payload.id).await?;
-        let ad_update_last = self.db_get_ad_update_last(payload.id).await?;
+    async fn process_payload_update(
+        &self,
+        db_tx: &mut sqlx::SqliteTransaction<'_>,
+        blob: &Blob,
+        payload: PayloadUpdate,
+    ) -> Result<()> {
+        let ad = Database(&mut **db_tx).get_ad(payload.id).await?;
+        let ad_update_last = Database(&mut **db_tx)
+            .get_ad_update_last(payload.id)
+            .await?;
 
         let st = Statement::Custom(
             ad.custom_predicate_ref.0,
@@ -651,6 +673,7 @@ impl Node {
         );
         let sts_hash = calculate_statements_hash(&[st.into()], &self.params);
         let public_inputs = [sts_hash.0, ad.vds_root.0.0].concat();
+        dbg!(&public_inputs);
         let proof_with_pis = CompressedProofWithPublicInputs {
             proof: payload.shrunk_main_pod_proof,
             public_inputs,
@@ -670,7 +693,7 @@ impl Node {
             state: RawValueSql(payload.new_state),
             blob_versioned_hash,
         };
-        self.db_add_ad_update(&ad_update).await
+        Database(&mut **db_tx).add_ad_update(&ad_update).await
     }
 }
 
@@ -712,8 +735,8 @@ async fn main() -> Result<()> {
     }
     info!("Started HTTP server");
 
-    let initial_slot = node
-        .db_get_visited_slot_last()
+    let initial_slot = Database(&node.db)
+        .get_visited_slot_last()
         .await
         .map(|x| x + 1)
         .unwrap_or(node.cfg.ad_genesis_slot)
@@ -733,10 +756,11 @@ async fn main() -> Result<()> {
             }
         };
 
-        node.process_beacon_block_header(&beacon_block_header)
+        let mut tx = node.db.begin().await?;
+        node.process_beacon_block_header(&mut tx, &beacon_block_header)
             .await?;
-
-        node.db_add_visited_slot(slot as i64).await?;
+        Database(&mut *tx).add_visited_slot(slot as i64).await?;
+        tx.commit().await?;
 
         if node.cfg.request_rate != 0 {
             let requests = 5;

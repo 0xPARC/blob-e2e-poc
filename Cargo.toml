@@ -28,8 +28,11 @@ hex = "0.4.3"
 # [patch."https://github.com/0xPARC/pod2"]
 # pod2 = { path = "../pod2" }
 
+[patch."https://github.com/0xPARC/plonky2"]
+plonky2 = { git = "https://github.com/0xPARC/plonky2?rev=main", rev = "111764c318257f340c10bc27c109d22f3f4af12c" }
+
 # [patch."https://github.com/0xPARC/plonky2"]
 # plonky2 = { path = "../plonky2/plonky2" }
 
-[profile.release]
-debug = true
+# [profile.release]
+# debug = true
