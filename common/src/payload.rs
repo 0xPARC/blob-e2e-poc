@@ -198,13 +198,14 @@ mod tests {
         println!("SrhunkMainPod setup");
         let shrunk_main_pod_build = ShrunkMainPodSetup::new(&params).build().unwrap();
         let common_data = &shrunk_main_pod_build.circuit_data.common;
+        let predicates = app::build_predicates(&params);
         let id = Hash([F(1), F(2), F(3), F(4)]);
         let custom_predicate_ref = CustomPredicateRef {
             batch: CustomPredicateBatch::new_opaque(
                 "unknown".to_string(),
-                Hash([F(5), F(6), F(7), F(8)]),
+                predicates.update_pred.batch.id(),
             ),
-            index: 3,
+            index: predicates.update_pred.index,
         };
         let vd_set = &*DEFAULT_VD_SET;
         let vds_root = vd_set.root();
@@ -227,6 +228,7 @@ mod tests {
         let count = 6;
         let op = dict!(32, {"name" => "inc", "n" => count}).unwrap();
         let (new_state, st_update) = helper.st_update(state, &[op]);
+        println!("st: {:?}", st_update);
         builder.reveal(&st_update);
 
         println!("MainPod prove");
@@ -256,12 +258,14 @@ mod tests {
             custom_predicate_ref,
             vec![Value::from(new_state), Value::from(state)],
         );
+        println!("st: {:?}", st);
         let sts_hash = calculate_statements_hash(&[st.into()], &params);
         let public_inputs = [sts_hash.0, vds_root.0].concat();
         let proof_with_pis = CompressedProofWithPublicInputs {
             proof: shrunk_main_pod_proof,
             public_inputs,
         };
+        dbg!(&proof_with_pis.public_inputs);
         let proof = proof_with_pis
             .decompress(
                 &shrunk_main_pod_build
