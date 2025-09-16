@@ -1,6 +1,8 @@
 use std::sync::Arc;
 
 use common::CustomError;
+use hex::FromHex;
+use pod2::middleware::Hash;
 use warp::Filter;
 
 use crate::Node;
@@ -12,9 +14,9 @@ pub(crate) async fn handler_get_ad_state(
     ad_id_str: String,
     node: Arc<Node>,
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    let ad_id = hex::decode(&ad_id_str).map_err(|e| CustomError(e.to_string()))?;
+    let ad_id = Hash::from_hex(&ad_id_str).map_err(|e| CustomError(e.to_string()))?;
     let ad_state = node
-        .db_get_ad_state(&ad_id)
+        .db_get_ad_update_last_state(ad_id)
         .await
         .map_err(|e| CustomError(e.to_string()))?;
     Ok(warp::reply::json(&ad_state))
@@ -28,6 +30,7 @@ pub(crate) fn routes(
 ) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
     get_ad_state(node)
 }
+
 fn get_ad_state(
     node: Arc<Node>,
 ) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {

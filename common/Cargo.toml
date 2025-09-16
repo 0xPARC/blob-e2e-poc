@@ -9,3 +9,5 @@ sqlx = { workspace = true }
 log = { workspace = true }
 dotenvy = { workspace = true }
 warp = { workspace = true }
+pod2 = { workspace = true }
+plonky2 = { workspace = true }

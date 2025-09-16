@@ -1,3 +1,5 @@
+pub mod payload;
+
 use std::{io, str::FromStr, time::Duration};
 
 use anyhow::Result;

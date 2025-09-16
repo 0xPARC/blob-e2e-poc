@@ -9,7 +9,10 @@ use alloy_network::Ethereum;
 use alloy_provider::{Provider, RootProvider};
 use anyhow::{Context, Result, anyhow};
 use backoff::ExponentialBackoffBuilder;
-use common::load_dotenv;
+use common::{
+    load_dotenv,
+    payload::{Payload, PayloadInit, PayloadUpdate},
+};
 use plonky2::plonk::{
     circuit_builder::CircuitBuilder, circuit_data::CircuitConfig, config::GenericConfig,
     proof::CompressedProofWithPublicInputs,
@@ -18,13 +21,15 @@ use pod2::{
     backends::plonky2::{
         mainpod::{
             cache_get_rec_main_pod_common_circuit_data,
-            cache_get_rec_main_pod_verifier_circuit_data,
+            cache_get_rec_main_pod_verifier_circuit_data, calculate_statements_hash,
         },
         serialization::{CommonCircuitDataSerializer, VerifierCircuitDataSerializer},
     },
     cache,
     cache::CacheEntry,
-    middleware::{C, CommonCircuitData, D, Params, VerifierCircuitData},
+    middleware::{
+        C, CommonCircuitData, D, Hash, Params, RawValue, Statement, Value, VerifierCircuitData,
+    },
 };
 use sqlx::{SqlitePool, migrate::MigrateDatabase, sqlite::Sqlite};
 use synchronizer::{
@@ -40,7 +45,7 @@ use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
 pub mod endpoints;
 
-const AD_TEST_ID: [u8; 3] = [1, 2, 3];
+type B256 = [u8; 32];
 
 /// performs 1 level recursion (plonky2) to get rid of extra custom gates and zk
 pub fn shrunk_mainpod_circuit_data(
@@ -129,40 +134,160 @@ struct Node {
 
 // SQL tables
 pub mod tables {
+    use anyhow::Error;
+    use common::payload::{
+        read_custom_predicate_ref, read_elems, write_custom_predicate_ref, write_elems,
+    };
+    use pod2::middleware::{CustomPredicateRef, Hash, RawValue};
+
+    use super::B256;
+
+    #[derive(Debug, Eq, PartialEq)]
+    pub struct HashSql(pub Hash);
+
+    impl TryFrom<Vec<u8>> for HashSql {
+        type Error = Error;
+
+        fn try_from(bytes: Vec<u8>) -> Result<Self, Self::Error> {
+            Ok(Self(Hash(read_elems(&mut bytes.as_slice())?)))
+        }
+    }
+
+    impl HashSql {
+        pub fn to_bytes(&self) -> Vec<u8> {
+            let mut buffer = Vec::with_capacity(32);
+            write_elems(&mut buffer, &self.0.0);
+            buffer
+        }
+    }
+
+    #[derive(Debug, Eq, PartialEq)]
+    pub struct RawValueSql(pub RawValue);
+
+    impl TryFrom<Vec<u8>> for RawValueSql {
+        type Error = Error;
+
+        fn try_from(bytes: Vec<u8>) -> Result<Self, Self::Error> {
+            Ok(Self(RawValue(read_elems(&mut bytes.as_slice())?)))
+        }
+    }
+
+    impl RawValueSql {
+        pub fn to_bytes(&self) -> Vec<u8> {
+            let mut buffer = Vec::with_capacity(32);
+            write_elems(&mut buffer, &self.0.0);
+            buffer
+        }
+    }
+
+    #[derive(Debug, Eq, PartialEq)]
+    pub struct CustomPredicateRefSql(pub CustomPredicateRef);
+
+    impl TryFrom<Vec<u8>> for CustomPredicateRefSql {
+        type Error = Error;
+
+        fn try_from(bytes: Vec<u8>) -> Result<Self, Self::Error> {
+            Ok(Self(read_custom_predicate_ref(&mut bytes.as_slice())?))
+        }
+    }
+
+    impl CustomPredicateRefSql {
+        pub fn to_bytes(&self) -> Vec<u8> {
+            let mut buffer = Vec::with_capacity(32);
+            write_custom_predicate_ref(&mut buffer, &self.0);
+            buffer
+        }
+    }
+
+    #[derive(Debug, PartialEq, Eq, sqlx::FromRow)]
+    pub struct Ad {
+        #[sqlx(try_from = "Vec<u8>")]
+        pub id: HashSql,
+        #[sqlx(try_from = "Vec<u8>")]
+        pub custom_predicate_ref: CustomPredicateRefSql,
+        #[sqlx(try_from = "Vec<u8>")]
+        pub vds_root: HashSql,
+        #[sqlx(try_from = "Vec<u8>")]
+        pub state: RawValueSql,
+        #[sqlx(try_from = "Vec<u8>")]
+        pub blob_versioned_hash: B256,
+    }
+
     #[derive(Debug, PartialEq, Eq, sqlx::FromRow)]
     pub struct AdUpdate {
-        pub id: Vec<u8>,
+        #[sqlx(try_from = "Vec<u8>")]
+        pub id: HashSql,
         pub num: i64,
-        pub slot: i64,
-        pub tx_index: i64,
-        pub blob_index: i64,
-        pub update_index: i64,
-        pub timestamp: i64,
-        pub state: Vec<u8>,
-        // pub state_prev: Vec<u8>,
+        #[sqlx(try_from = "Vec<u8>")]
+        pub state: RawValueSql,
+        #[sqlx(try_from = "Vec<u8>")]
+        pub blob_versioned_hash: B256,
     }
+
+    #[derive(Debug, PartialEq, Eq, sqlx::FromRow)]
+    pub struct Blob {
+        #[sqlx(try_from = "Vec<u8>")]
+        pub versioned_hash: B256,
+        pub slot: i64,
+        pub block: i64,
+        pub blob_index: i64,
+        pub timestamp: i64,
+    }
+
     #[derive(Debug, PartialEq, Eq, sqlx::FromRow)]
     pub struct VisitedSlot {
         pub slot: i64,
     }
 }
 
+use tables::{CustomPredicateRefSql, HashSql, RawValueSql};
+
 impl Node {
+    async fn db_add_blob(&self, blob: &tables::Blob) -> Result<()> {
+        let mut tx = self.db.begin().await?;
+        sqlx::query(
+            "INSERT INTO blob (versioned_hash, slot, block, blob_index, timestamp) VALUES (?, ?, ?, ?, ?)",
+        )
+        .bind(blob.versioned_hash.as_slice())
+        .bind(blob.slot)
+        .bind(blob.block)
+        .bind(blob.blob_index)
+        .bind(blob.timestamp)
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+
+        Ok(())
+    }
+
+    async fn db_add_ad(&self, ad: &tables::Ad) -> Result<()> {
+        let mut tx = self.db.begin().await?;
+        sqlx::query(
+            "INSERT INTO ad (id, custom_predicate_ref, vds_root, state, blob_versioned_hash) VALUES (?, ?, ?, ?, ?)",
+        )
+        .bind(ad.id.to_bytes())
+        .bind(ad.custom_predicate_ref.to_bytes())
+        .bind(ad.vds_root.to_bytes())
+        .bind(ad.state.to_bytes())
+        .bind(ad.blob_versioned_hash.as_slice())
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+
+        Ok(())
+    }
+
     async fn db_add_ad_update(&self, update: &tables::AdUpdate) -> Result<()> {
         let mut tx = self.db.begin().await?;
         sqlx::query(
-                "INSERT INTO ad_update (id, num, slot, tx_index, blob_index, update_index, timestamp, state) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            )
-            .bind(&update.id)
-            .bind(update.num)
-            .bind(update.slot)
-            .bind(update.tx_index)
-            .bind(update.blob_index)
-            .bind(update.update_index)
-            .bind(update.timestamp)
-            .bind(&update.state)
+            "INSERT INTO ad_update (id, num, state, blob_versioned_hash) VALUES (?, ?, ?, ?)",
+        )
+        .bind(update.id.to_bytes())
+        .bind(update.num)
+        .bind(update.state.to_bytes())
+        .bind(update.blob_versioned_hash.as_slice())
         .execute(&mut *tx)
-            .await?;
+        .await?;
         tx.commit().await?;
 
         Ok(())
@@ -179,16 +304,32 @@ impl Node {
         Ok(())
     }
 
-    async fn db_get_ad_state(&self, ad_id: &[u8]) -> Result<Vec<u8>> {
-        let (state,) =
-            sqlx::query_as("SELECT state FROM ad_update WHERE id = ? ORDER BY num DESC LIMIT 1")
-                .bind(ad_id)
-                .fetch_one(&self.db)
-                .await?;
-        Ok(state)
+    async fn db_get_ad(&self, ad_id: Hash) -> Result<tables::Ad> {
+        Ok(sqlx::query_as("SELECT * FROM ad WHERE id = ?")
+            .bind(HashSql(ad_id).to_bytes())
+            .fetch_one(&self.db)
+            .await?)
     }
 
-    async fn db_get_last_visited_slot(&self) -> Result<u32> {
+    async fn db_get_ad_update_last(&self, ad_id: Hash) -> Result<tables::AdUpdate> {
+        Ok(
+            sqlx::query_as("SELECT * FROM ad_update WHERE id = ? ORDER BY num DESC LIMIT 1")
+                .bind(HashSql(ad_id).to_bytes())
+                .fetch_one(&self.db)
+                .await?,
+        )
+    }
+
+    async fn db_get_ad_update_last_state(&self, ad_id: Hash) -> Result<RawValue> {
+        let (state,): (Vec<u8>,) =
+            sqlx::query_as("SELECT state FROM ad_update WHERE id = ? ORDER BY num DESC LIMIT 1")
+                .bind(HashSql(ad_id).to_bytes())
+                .fetch_one(&self.db)
+                .await?;
+        Ok(RawValueSql::try_from(state).expect("32 bytes").0)
+    }
+
+    async fn db_get_visited_slot_last(&self) -> Result<u32> {
         let (slot,) = sqlx::query_as("SELECT slot FROM visited_slot ORDER BY slot DESC LIMIT 1")
             .fetch_one(&self.db)
             .await?;
@@ -204,16 +345,41 @@ impl Node {
 
         sqlx::query(
             r#"
+            CREATE TABLE IF NOT EXISTS blob (
+                versioned_hash BLOB PRIMARY KEY,
+                slot INTEGER NOT NULL,
+                block INTEGER NOT NULL,
+                blob_index INTEGER NOT NULL,
+                timestamp INTEGER NOT NULL,
+            );
+            "#,
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query(
+            r#"
             CREATE TABLE IF NOT EXISTS ad_update (
                 id BLOB NOT NULL,
                 num INTEGER NOT NULL,
-                slot INTEGER NOT NULL,
-                tx_index INTEGER NOT NULL,
-                blob_index INTEGER NOT NULL,
-                update_index INTEGER NOT NULL,
-                timestamp INTEGER NOT NULL,
-
                 state BLOB NOT NULL,
+                blob_versioned_hash BLOB NOT NULL,
+
+                PRIMARY KEY (id, num)
+            );
+            "#,
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS ad (
+                id BLOB NOT NULL,
+                custom_predicate_ref BLOB NOT NULL,
+                vds_root BLOB NOT NULL,
+                state BLOB NOT NULL,
+                blob_versioned_hash BLOB NOT NULL,
 
                 PRIMARY KEY (id, num)
             );
@@ -412,7 +578,7 @@ impl Node {
             .map(|blob| kzg_to_versioned_hash(blob.kzg_commitment.as_ref()))
             .collect();
 
-        for (tx_index, tx) in indexed_blob_txs {
+        for (_tx_index, tx) in indexed_blob_txs {
             let tx = tx.as_recovered();
             let hash = tx.hash();
             let from = tx.signer();
@@ -436,50 +602,110 @@ impl Node {
                 for blob_index in tx_blob_indices.iter() {
                     let blob = &blobs[*blob_index];
                     info!("Found AD blob");
-                    match self.pod_from_blob(blob) {
+                    match self.process_ad_blob(blob).await {
                         Ok(_) => {
-                            info!("MainPod verified!");
-                            let update = tables::AdUpdate {
-                                id: AD_TEST_ID.to_vec(),
-                                num: 0,
-                                slot: slot as i64,
-                                tx_index: tx_index as i64,
-                                blob_index: *blob_index as i64,
-                                update_index: 0,
-                                timestamp: execution_block.header.timestamp as i64,
-                                state: vec![4, 5, 6, 7, 8],
-                            };
-                            self.db_add_ad_update(&update).await?;
-                            // Just for testing
-                            let ad_id = &AD_TEST_ID;
-                            let state = self.db_get_ad_state(ad_id).await?;
-                            info!("State of id={:?} is {:?}", ad_id, state);
+                            info!(
+                                "Valid ad_blob at slot {}, blob_index {}!",
+                                slot, *blob_index
+                            );
                         }
                         Err(e) => {
-                            debug!("Invalid pod in blob: {:?}", e);
+                            debug!("Invalid ad_blob: {:?}", e);
                             continue;
                         }
                     };
+
+                    self.db_add_blob(&tables::Blob {
+                        versioned_hash: kzg_to_versioned_hash(blob.kzg_commitment.as_ref()).0,
+                        slot: slot as i64,
+                        block: execution_block.header.number as i64,
+                        blob_index: *blob_index as i64,
+                        timestamp: execution_block.header.timestamp as i64,
+                    })
+                    .await?;
                 }
             }
         }
         Ok(Some(()))
     }
 
-    fn pod_from_blob(&self, blob: &Blob) -> Result<()> {
+    async fn process_ad_blob(&self, blob: &Blob) -> Result<()> {
         let bytes =
             bytes_from_simple_blob(blob.blob.inner()).context("Invalid byte encoding in blob")?;
-        let proof = CompressedProofWithPublicInputs::<_, C, D>::from_bytes(
-            bytes,
-            &self.common_circuit_data,
-        )
-        .context("CompressedProofWithPublicInputs::from_bytes")?
-        .decompress(
-            &self.verifier_circuit_data.verifier_only.circuit_digest,
-            &self.common_circuit_data,
-        )
-        .context("CompressedProofWithPublicInputs::decompress")?;
-        self.verifier_circuit_data.verify(proof)
+        let payload = Payload::from_bytes(&bytes, &self.common_circuit_data)?;
+
+        match payload {
+            Payload::Init(payload) => self.process_payload_init(blob, payload).await,
+            Payload::Update(payload) => self.process_payload_update(blob, payload).await,
+        }
+    }
+
+    async fn process_payload_init(&self, blob: &Blob, payload: PayloadInit) -> Result<()> {
+        match self.db_get_ad(payload.id).await {
+            Err(err) => match err.root_cause().downcast_ref::<sqlx::Error>() {
+                Some(&sqlx::Error::RowNotFound) => {}
+                _ => return Err(err),
+            },
+            Ok(ad) => {
+                return Err(anyhow!(
+                    "got init payload {:?} but AD already exists {:?}",
+                    payload,
+                    ad
+                ));
+            }
+        };
+
+        let blob_versioned_hash = kzg_to_versioned_hash(blob.kzg_commitment.as_ref()).0;
+        let ad = tables::Ad {
+            id: HashSql(payload.id),
+            custom_predicate_ref: CustomPredicateRefSql(payload.custom_predicate_ref),
+            vds_root: HashSql(payload.vds_root),
+            state: RawValueSql(payload.state),
+            blob_versioned_hash,
+        };
+        self.db_add_ad(&ad).await?;
+        let ad_update = tables::AdUpdate {
+            id: HashSql(payload.id),
+            num: 0,
+            state: RawValueSql(payload.state),
+            blob_versioned_hash,
+        };
+        self.db_add_ad_update(&ad_update).await
+    }
+
+    async fn process_payload_update(&self, blob: &Blob, payload: PayloadUpdate) -> Result<()> {
+        let ad = self.db_get_ad(payload.id).await?;
+        let ad_update_last = self.db_get_ad_update_last(payload.id).await?;
+
+        let st = Statement::Custom(
+            ad.custom_predicate_ref.0,
+            vec![
+                Value::from(payload.new_state),
+                Value::from(ad_update_last.state.0),
+            ],
+        );
+        let sts_hash = calculate_statements_hash(&[st.into()], &self.params);
+        let public_inputs = [sts_hash.0, ad.vds_root.0.0].concat();
+        let proof_with_pis = CompressedProofWithPublicInputs {
+            proof: payload.shrunk_main_pod_proof,
+            public_inputs,
+        };
+        let proof = proof_with_pis
+            .decompress(
+                &self.verifier_circuit_data.verifier_only.circuit_digest,
+                &self.common_circuit_data,
+            )
+            .context("CompressedProofWithPublicInputs::decompress")?;
+        self.verifier_circuit_data.verify(proof)?;
+
+        let blob_versioned_hash = kzg_to_versioned_hash(blob.kzg_commitment.as_ref()).0;
+        let ad_update = tables::AdUpdate {
+            id: HashSql(payload.id),
+            num: ad_update_last.num + 1,
+            state: RawValueSql(payload.new_state),
+            blob_versioned_hash,
+        };
+        self.db_add_ad_update(&ad_update).await
     }
 }
 
@@ -522,7 +748,7 @@ async fn main() -> Result<()> {
     info!("Started HTTP server");
 
     let initial_slot = node
-        .db_get_last_visited_slot()
+        .db_get_visited_slot_last()
         .await
         .map(|x| x + 1)
         .unwrap_or(node.cfg.ad_genesis_slot)
@@ -553,6 +779,8 @@ async fn main() -> Result<()> {
             sleep(Duration::from_millis(delay_ms)).await;
         }
     }
+
+    // TODO: continue waiting for new slots using `node.beacon_cli.subscribe_to_events`
 
     Ok(())
 }
