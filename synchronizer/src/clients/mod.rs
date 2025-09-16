@@ -21,4 +21,3 @@
 
 pub mod beacon;
 pub mod common;
-pub mod macros;

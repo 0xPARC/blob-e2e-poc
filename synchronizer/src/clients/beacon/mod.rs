@@ -30,12 +30,9 @@ use reqwest_eventsource::EventSource;
 use types::BlockHeader;
 
 use self::types::{Blob, BlobsResponse, Block, BlockId, BlockResponse, Topic};
-use crate::{
-    clients::{
-        beacon::types::{BlockHeaderResponse, Spec, SpecResponse},
-        common::{ClientError, ClientResult},
-    },
-    json_get,
+use crate::clients::{
+    beacon::types::{BlockHeaderResponse, Spec, SpecResponse},
+    common::{ClientError, ClientResult, json_get},
 };
 
 #[derive(Debug, Clone)]
@@ -76,7 +73,8 @@ impl BeaconClient {
         let url = self.base_url.join(path.as_str())?;
 
         result_some(
-            json_get!(&self.client, url, BlockResponse, self.exp_backoff.clone())
+            json_get::<BlockResponse>(&self.client, url, None, self.exp_backoff.clone())
+                .await
                 .map(|res| res.into()),
         )
     }
@@ -86,13 +84,9 @@ impl BeaconClient {
         let url = self.base_url.join(path.as_str())?;
 
         result_some(
-            json_get!(
-                &self.client,
-                url,
-                BlockHeaderResponse,
-                self.exp_backoff.clone()
-            )
-            .map(|res| res.into()),
+            json_get::<BlockHeaderResponse>(&self.client, url, None, self.exp_backoff.clone())
+                .await
+                .map(|res| res.into()),
         )
     }
 
@@ -102,8 +96,10 @@ impl BeaconClient {
         });
         let url = self.base_url.join(path.as_str())?;
 
-        let mut blobs = json_get!(&self.client, url, BlobsResponse, self.exp_backoff.clone())
-            .map(|res| res.data)?;
+        let mut blobs =
+            json_get::<BlobsResponse>(&self.client, url, None, self.exp_backoff.clone())
+                .await
+                .map(|res| res.data)?;
         blobs.sort_by_key(|blob| blob.index);
         Ok(blobs)
     }
@@ -111,7 +107,9 @@ impl BeaconClient {
     pub async fn get_spec(&self) -> ClientResult<Spec> {
         let url = self.base_url.join("v1/config/spec")?;
 
-        json_get!(&self.client, url, SpecResponse, self.exp_backoff.clone()).map(|res| res.data)
+        json_get::<SpecResponse>(&self.client, url, None, self.exp_backoff.clone())
+            .await
+            .map(|res| res.data)
     }
 
     pub fn subscribe_to_events(&self, topics: &[Topic]) -> ClientResult<EventSource> {
