@@ -35,7 +35,7 @@ impl Config {
         }
         Ok(Self {
             rpc_url: var("RPC_URL")?,
-            sqlite_path: var("SQLITE_PATH")?,
+            sqlite_path: var("AD_SERVER_SQLITE_PATH")?,
             priv_key: var("PRIV_KEY")?,
             to_addr: Address::from_str(&var("TO_ADDR")?)?,
         })
