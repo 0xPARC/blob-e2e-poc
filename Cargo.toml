@@ -26,10 +26,10 @@ warp = "0.3"
 hex = "0.4.3"
 
 # [patch."https://github.com/0xPARC/pod2"]
-# pod2 = { git="https://github.com/0xPARC/pod2?rev=main", rev = "021ccaeaa8693dec7b9538aad03931c85a83c191" }
-
-# [patch."https://github.com/0xPARC/pod2"]
 # pod2 = { path = "../pod2" }
 
 # [patch."https://github.com/0xPARC/plonky2"]
 # plonky2 = { path = "../plonky2/plonky2" }
+
+# [profile.release]
+# debug = true

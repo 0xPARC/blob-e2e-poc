@@ -1,3 +1,4 @@
+pub mod circuits;
 pub mod payload;
 
 use std::{io, str::FromStr, time::Duration};

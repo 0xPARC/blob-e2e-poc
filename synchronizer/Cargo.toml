@@ -18,7 +18,6 @@ hex = { workspace = true }
 
 common = { path = "../common" }
 
-blob-indexer = { git = "https://github.com/Blobscan/blobscan-indexer.rs", rev = "9e39b859d7991aee308d388e541dd6e7c2a22b42" }
 serde = { version = "1.0.150", features = ["derive"] }
 reqwest = { version = "0.11.13", features = ["json"] }
 async-trait = "0.1.80"

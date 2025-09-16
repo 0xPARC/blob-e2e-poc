@@ -1,7 +1,10 @@
+use std::sync::Arc;
+
 use app::{DEPTH, Helper};
 use common::{
     CustomError,
-    payload::{PayloadInit, PayloadUpdate},
+    circuits::{ShrunkMainPodBuild, shrink_compress_pod},
+    payload::{Payload, PayloadInit, PayloadUpdate},
 };
 use pod2::{
     backends::plonky2::mainpod::Prover,
@@ -13,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use warp::Filter;
 
-use crate::{Config, PodConfig, db, pod::compress_pod};
+use crate::{Config, PodConfig, db};
 
 // HANDLERS:
 
@@ -52,14 +55,12 @@ pub async fn handler_new_counter(
     let new_id = latest_counter.id + 1;
 
     // send the payload to ethereum
-    let mut payload_bytes: Vec<u8> = vec![];
-    PayloadInit {
+    let payload_bytes = Payload::Init(PayloadInit {
         id: Hash::from(RawValue::from(new_id)), // TODO hash
         custom_predicate_ref: pod_config.predicates.update_loop_pred,
         vds_root: pod_config.vd_set.root(),
-        state: RawValue::from(0),
-    }
-    .write_bytes(&mut payload_bytes);
+    })
+    .to_bytes();
 
     let tx_hash = crate::eth::send_payload(cfg, payload_bytes)
         .await
@@ -87,6 +88,7 @@ pub async fn handler_incr_counter(
     cfg: Config,
     db_pool: SqlitePool,
     pod_config: PodConfig,
+    shrunk_main_pod_build: Arc<ShrunkMainPodBuild>,
 ) -> Result<impl warp::Reply, warp::Rejection> {
     if count >= 10 {
         return Err(warp::reject::custom(CustomError(format!(
@@ -131,16 +133,15 @@ pub async fn handler_incr_counter(
     println!("# pod\n:{}", pod);
     pod.pod.verify().unwrap();
 
-    let compressed_proof = compress_pod(pod).unwrap();
+    let compressed_proof = shrink_compress_pod(&shrunk_main_pod_build, pod).unwrap();
     println!("[TIME] incr_counter pod {:?}", start.elapsed());
 
-    let mut payload_bytes: Vec<u8> = vec![];
-    PayloadUpdate {
+    let payload_bytes = Payload::Update(PayloadUpdate {
         id: Hash::from(RawValue::from(id)), // TODO hash
         shrunk_main_pod_proof: compressed_proof,
         new_state: RawValue::from(new_state),
-    }
-    .write_bytes(&mut payload_bytes);
+    })
+    .to_bytes();
 
     let tx_hash = crate::eth::send_payload(cfg, payload_bytes)
         .await
@@ -160,6 +161,7 @@ pub fn routes(
     cfg: Config,
     db_pool: SqlitePool,
     pod_config: PodConfig,
+    shrunk_main_pod_build: Arc<ShrunkMainPodBuild>,
 ) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
     get_counter(db_pool.clone())
         .or(new_counter(
@@ -167,7 +169,12 @@ pub fn routes(
             db_pool.clone(),
             pod_config.clone(),
         ))
-        .or(increment_counter(cfg, db_pool, pod_config))
+        .or(increment_counter(
+            cfg,
+            db_pool,
+            pod_config,
+            shrunk_main_pod_build,
+        ))
 }
 fn get_counter(
     db_pool: SqlitePool,
@@ -197,6 +204,7 @@ fn increment_counter(
     cfg: Config,
     db_pool: SqlitePool,
     pod_config: PodConfig,
+    shrunk_main_pod_build: Arc<ShrunkMainPodBuild>,
 ) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
     let db_filter = warp::any().map(move || db_pool.clone());
 
@@ -207,6 +215,7 @@ fn increment_counter(
         .and(with_config(cfg))
         .and(db_filter)
         .and(with_pod_config(pod_config))
+        .and(with_shrunk_main_pod_build(shrunk_main_pod_build))
         .and_then(handler_incr_counter)
 }
 
@@ -220,9 +229,15 @@ fn with_pod_config(
 ) -> impl Filter<Extract = (PodConfig,), Error = std::convert::Infallible> + Clone {
     warp::any().map(move || pod_config.clone())
 }
+fn with_shrunk_main_pod_build(
+    shrunk_main_pod_build: Arc<ShrunkMainPodBuild>,
+) -> impl Filter<Extract = (Arc<ShrunkMainPodBuild>,), Error = std::convert::Infallible> + Clone {
+    warp::any().map(move || shrunk_main_pod_build.clone())
+}
 
 #[cfg(test)]
 mod tests {
+    use common::circuits::ShrunkMainPodSetup;
     use pod2::{backends::plonky2::basetypes::DEFAULT_VD_SET, middleware::Params};
     use warp::http::StatusCode;
 
@@ -249,13 +264,14 @@ mod tests {
         let vd_set = &*DEFAULT_VD_SET;
         println!("vd_set calculation complete");
         let predicates = app::build_predicates(&params);
+        let shrunk_main_pod_build = Arc::new(ShrunkMainPodSetup::new(&params).build()?);
         let pod_config = PodConfig {
             params,
             vd_set: vd_set.clone(),
             predicates,
         };
 
-        let api = routes(cfg, db_pool, pod_config);
+        let api = routes(cfg, db_pool, pod_config, shrunk_main_pod_build);
 
         // set new counter
         let res = warp::test::request()
