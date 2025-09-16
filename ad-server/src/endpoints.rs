@@ -1,6 +1,15 @@
 use app::{DEPTH, Helper};
-use common::CustomError;
-use pod2::{backends::plonky2::mainpod::Prover, dict, frontend::MainPodBuilder};
+use common::{
+    CustomError,
+    payload::{PayloadInit, PayloadUpdate},
+};
+use pod2::{
+    backends::plonky2::mainpod::Prover,
+    dict,
+    frontend::MainPodBuilder,
+    middleware::{Hash, RawValue},
+};
+use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use warp::Filter;
 
@@ -20,7 +29,16 @@ pub async fn handler_get_counter(
 }
 
 // POST /counter
-pub async fn handler_new_counter(db_pool: SqlitePool) -> Result<impl warp::Reply, warp::Rejection> {
+#[derive(Serialize, Deserialize)]
+pub struct NewCounterResp {
+    id: i64,
+    tx_hash: alloy::primitives::TxHash,
+}
+pub async fn handler_new_counter(
+    cfg: Config,
+    db_pool: SqlitePool,
+    pod_config: PodConfig,
+) -> Result<impl warp::Reply, warp::Rejection> {
     let latest_counter = match sqlx::query_as::<_, db::Counter>(
         "SELECT id, count FROM counters ORDER BY id DESC LIMIT 1",
     )
@@ -31,15 +49,35 @@ pub async fn handler_new_counter(db_pool: SqlitePool) -> Result<impl warp::Reply
         Ok(None) => db::Counter { id: 0, count: 0 },
         Err(e) => return Err(warp::reject::custom(CustomError(e.to_string()))),
     };
+    let new_id = latest_counter.id + 1;
 
+    // send the payload to ethereum
+    let mut payload_bytes: Vec<u8> = vec![];
+    PayloadInit {
+        id: Hash::from(RawValue::from(new_id)), // TODO hash
+        custom_predicate_ref: pod_config.predicates.update_loop_pred,
+        vds_root: pod_config.vd_set.root(),
+        state: RawValue::from(0),
+    }
+    .write_bytes(&mut payload_bytes);
+
+    let tx_hash = crate::eth::send_payload(cfg, payload_bytes)
+        .await
+        .map_err(|e| CustomError(e.to_string()))?;
+
+    // update db
     let counter = db::Counter {
-        id: latest_counter.id + 1,
+        id: new_id,
         count: 0,
     };
     db::insert_counter(&db_pool, &counter)
         .await
         .map_err(|e| CustomError(e.to_string()))?;
-    Ok(warp::reply::json(&counter.id))
+
+    Ok(warp::reply::json(&NewCounterResp {
+        id: counter.id,
+        tx_hash,
+    }))
 }
 
 // POST /counter/{id}
@@ -93,10 +131,18 @@ pub async fn handler_incr_counter(
     println!("# pod\n:{}", pod);
     pod.pod.verify().unwrap();
 
-    let proof_bytes = compress_pod(pod).unwrap();
+    let compressed_proof = compress_pod(pod).unwrap();
     println!("[TIME] incr_counter pod {:?}", start.elapsed());
 
-    let tx_hash = crate::eth::send_pod_proof(cfg, proof_bytes)
+    let mut payload_bytes: Vec<u8> = vec![];
+    PayloadUpdate {
+        id: Hash::from(RawValue::from(id)), // TODO hash
+        shrunk_main_pod_proof: compressed_proof,
+        new_state: RawValue::from(new_state),
+    }
+    .write_bytes(&mut payload_bytes);
+
+    let tx_hash = crate::eth::send_payload(cfg, payload_bytes)
         .await
         .map_err(|e| CustomError(e.to_string()))?;
 
@@ -116,8 +162,12 @@ pub fn routes(
     pod_config: PodConfig,
 ) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
     get_counter(db_pool.clone())
-        .or(new_counter(db_pool.clone()))
-        .or(increment_counter(cfg, db_pool.clone(), pod_config))
+        .or(new_counter(
+            cfg.clone(),
+            db_pool.clone(),
+            pod_config.clone(),
+        ))
+        .or(increment_counter(cfg, db_pool, pod_config))
 }
 fn get_counter(
     db_pool: SqlitePool,
@@ -130,13 +180,17 @@ fn get_counter(
         .and_then(handler_get_counter)
 }
 fn new_counter(
+    cfg: Config,
     db_pool: SqlitePool,
+    pod_config: PodConfig,
 ) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
     let db_filter = warp::any().map(move || db_pool.clone());
 
     warp::path!("counter")
         .and(warp::post())
+        .and(with_config(cfg))
         .and(db_filter)
+        .and(with_pod_config(pod_config))
         .and_then(handler_new_counter)
 }
 fn increment_counter(
@@ -211,9 +265,14 @@ mod tests {
             .await;
         assert_eq!(res.status(), StatusCode::OK);
 
-        let s = std::str::from_utf8(res.body()).expect("Invalid UTF-8");
-        let received_id: i64 = s.parse()?;
-        assert_eq!(received_id, 1); // counter's id always start at 1
+        // let s = std::str::from_utf8(res.body()).expect("Invalid UTF-8");
+        // let received_id: i64 = s.parse()?;
+        let resp: NewCounterResp = serde_json::from_slice(res.body()).expect("");
+        assert_eq!(resp.id, 1); // counter's id always start at 1
+        assert_eq!(
+            resp.tx_hash.to_string(),
+            "0x0000000000000000000000000000000000000000000000000000000000000000"
+        ); // mock tx hash
 
         // increment the counter
         let res = warp::test::request()

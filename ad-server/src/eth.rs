@@ -11,7 +11,7 @@ use anyhow::{Result, anyhow};
 
 use crate::Config;
 
-pub async fn send_pod_proof(cfg: Config, compressed_proof_bytes: Vec<u8>) -> Result<TxHash> {
+pub async fn send_payload(cfg: Config, b: Vec<u8>) -> Result<TxHash> {
     if cfg.priv_key.is_empty() {
         // test mode, return a mock tx_hash
         return Ok(TxHash::from([0u8; 32]));
@@ -31,7 +31,7 @@ pub async fn send_pod_proof(cfg: Config, compressed_proof_bytes: Vec<u8>) -> Res
     dbg!(&sender);
     dbg!(&receiver);
 
-    let sidecar: SidecarBuilder<SimpleCoder> = SidecarBuilder::from_slice(&compressed_proof_bytes);
+    let sidecar: SidecarBuilder<SimpleCoder> = SidecarBuilder::from_slice(&b);
     let sidecar = sidecar.build()?;
 
     let tx = TransactionRequest::default()
