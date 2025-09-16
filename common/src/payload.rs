@@ -53,6 +53,7 @@ pub fn read_custom_predicate_ref(bytes: &mut impl Read) -> Result<CustomPredicat
     })
 }
 
+#[derive(Debug, Eq, PartialEq)]
 #[allow(clippy::large_enum_variant)]
 pub enum Payload {
     Init(PayloadInit),
@@ -109,7 +110,7 @@ impl Payload {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct PayloadInit {
     pub id: Hash,
     pub custom_predicate_ref: CustomPredicateRef,
@@ -136,7 +137,7 @@ impl PayloadInit {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct PayloadUpdate {
     pub id: Hash,
     pub shrunk_main_pod_proof: CompressedProof<F, C, D>,
@@ -172,5 +173,76 @@ impl PayloadUpdate {
             shrunk_main_pod_proof,
             new_state,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use pod2::{
+        backends::plonky2::{basetypes::DEFAULT_VD_SET, mainpod::Prover},
+        dict,
+        frontend::MainPodBuilder,
+        middleware::Params,
+    };
+
+    use super::*;
+    use crate::circuits::{ShrunkMainPodSetup, shrink_compress_pod};
+
+    #[test]
+    fn test_payload_roundtrip() {
+        let params = Params::default();
+        println!("SrhunkMainPod setup");
+        let shrunk_main_pod_build = ShrunkMainPodSetup::new(&params).build();
+        let common_data = &shrunk_main_pod_build.circuit_data.common;
+        let id = Hash([F(1), F(2), F(3), F(4)]);
+        let custom_predicate_ref = CustomPredicateRef {
+            batch: CustomPredicateBatch::new_opaque(
+                "unknown".to_string(),
+                Hash([F(5), F(6), F(7), F(8)]),
+            ),
+            index: 3,
+        };
+        let vd_set = &*DEFAULT_VD_SET;
+        let vds_root = vd_set.root();
+        let payload_init = Payload::Init(PayloadInit {
+            id,
+            custom_predicate_ref,
+            vds_root,
+        });
+
+        println!("PayloadInit roundtrip");
+        let payload_init_bytes = payload_init.to_bytes();
+        let payload_init_decoded = Payload::from_bytes(&payload_init_bytes, common_data).unwrap();
+        assert_eq!(payload_init, payload_init_decoded);
+
+        let mut builder = MainPodBuilder::new(&params, &vd_set);
+        let predicates = app::build_predicates(&params);
+        let mut helper = app::Helper::new(&mut builder, &predicates);
+
+        let state = 0;
+        let count = 6;
+        let op = dict!(32, {"name" => "inc", "n" => count}).unwrap();
+        let (new_state, st_update) = helper.st_update(state, &[op]);
+        builder.reveal(&st_update);
+
+        println!("MainPod prove");
+        let prover = Prover {};
+        let pod = builder.prove(&prover).unwrap();
+        pod.pod.verify().unwrap();
+
+        println!("MainPod shrink & compress");
+        let shrunk_main_pod_proof = shrink_compress_pod(&shrunk_main_pod_build, pod).unwrap();
+
+        let payload_update = Payload::Update(PayloadUpdate {
+            id,
+            shrunk_main_pod_proof,
+            new_state: RawValue::from(new_state),
+        });
+
+        println!("PayloadUpdate roundtrip");
+        let payload_update_bytes = payload_update.to_bytes();
+        let payload_update_decoded =
+            Payload::from_bytes(&payload_update_bytes, common_data).unwrap();
+        assert_eq!(payload_update, payload_update_decoded);
     }
 }

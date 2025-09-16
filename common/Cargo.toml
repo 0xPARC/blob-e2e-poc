@@ -11,3 +11,8 @@ dotenvy = { workspace = true }
 warp = { workspace = true }
 pod2 = { workspace = true }
 plonky2 = { workspace = true }
+itertools = "0.14.0"
+
+[dev-dependencies]
+app = { path = "../app" }
+ad-server = { path = "../ad-server" }
