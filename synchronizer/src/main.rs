@@ -1,5 +1,5 @@
 #![allow(clippy::uninlined_format_args)]
-use std::{str::FromStr, time::Duration};
+use std::{str::FromStr, sync::Arc, time::Duration};
 
 use alloy::{
     consensus::Transaction, eips as alloy_eips, eips::eip4844::kzg_to_versioned_hash,
@@ -34,9 +34,11 @@ use synchronizer::{
         types::{Blob, BlockHeader, BlockId},
     },
 };
-use tokio::time::sleep;
+use tokio::{runtime::Runtime, time::sleep};
 use tracing::{debug, info};
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
+
+pub mod endpoints;
 
 const AD_TEST_ID: [u8; 3] = [1, 2, 3];
 
@@ -81,7 +83,7 @@ pub fn cache_get_shrunk_main_pod_circuit_data(
     .expect("cache ok")
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Config {
     // The URL for the Beacon API
     pub beacon_url: String,
@@ -113,7 +115,7 @@ impl Config {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct Node {
     cfg: Config,
     #[allow(dead_code)]
@@ -178,10 +180,11 @@ impl Node {
     }
 
     async fn db_get_ad_state(&self, ad_id: &[u8]) -> Result<Vec<u8>> {
-        let (state,) = sqlx::query_as("SELECT state FROM ad_update ORDER BY num DESC LIMIT 1")
-            .bind(ad_id)
-            .fetch_one(&self.db)
-            .await?;
+        let (state,) =
+            sqlx::query_as("SELECT state FROM ad_update WHERE id = ? ORDER BY num DESC LIMIT 1")
+                .bind(ad_id)
+                .fetch_one(&self.db)
+                .await?;
         Ok(state)
     }
 
@@ -505,6 +508,19 @@ async fn main() -> Result<()> {
         .expect("head is not None");
     info!(?head, "Beacon head");
 
+    {
+        let node = node.clone();
+        std::thread::spawn(move || -> Result<_, std::io::Error> {
+            Runtime::new().map(|rt| {
+                rt.block_on(async {
+                    let routes = endpoints::routes(Arc::new(node));
+                    warp::serve(routes).run(([0, 0, 0, 0], 8001)).await
+                })
+            })
+        });
+    }
+    info!("Started HTTP server");
+
     let initial_slot = node
         .db_get_last_visited_slot()
         .await
@@ -514,7 +530,6 @@ async fn main() -> Result<()> {
 
     for slot in initial_slot..head.slot {
         info!("checking slot {}", slot);
-        println!("checking slot {}", slot);
         let beacon_block_header = match node
             .beacon_cli
             .get_block_header(BlockId::Slot(slot))

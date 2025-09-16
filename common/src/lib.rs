@@ -4,6 +4,12 @@ use anyhow::Result;
 use log::LevelFilter;
 use sqlx::{ConnectOptions, SqlitePool, sqlite::SqliteConnectOptions};
 
+/// struct used to convert sqlx errors to warp errors
+#[allow(dead_code)]
+#[derive(Debug)]
+pub struct CustomError(pub String);
+impl warp::reject::Reject for CustomError {}
+
 pub fn load_dotenv() -> Result<()> {
     for filename in [".env.default", ".env"] {
         if let Err(err) = dotenvy::from_filename_override(filename) {
