@@ -15,4 +15,3 @@ itertools = "0.14.0"
 
 [dev-dependencies]
 app = { path = "../app" }
-ad-server = { path = "../ad-server" }
