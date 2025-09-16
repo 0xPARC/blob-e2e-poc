@@ -75,8 +75,6 @@ impl ShrunkMainPodSetup {
         shrunk_main_pod: &ShrunkMainPodTarget,
     ) -> Result<()> {
         // create circuit logic
-        let proof_with_pis_target =
-            builder.add_virtual_proof_with_pis(&self.main_pod_common_circuit_data);
         let verifier_circuit_target =
             builder.constant_verifier_data(&self.main_pod_verifier_circuit_data.verifier_only);
         builder.verify_proof::<C>(
@@ -85,7 +83,7 @@ impl ShrunkMainPodSetup {
             &self.main_pod_common_circuit_data,
         );
 
-        builder.register_public_inputs(&proof_with_pis_target.public_inputs);
+        builder.register_public_inputs(&shrunk_main_pod.proof_with_pis_target.public_inputs);
 
         Ok(())
     }
