@@ -15,7 +15,6 @@ use tracing::info;
 pub mod db;
 pub mod endpoints;
 pub mod eth;
-pub mod pod;
 
 #[derive(Debug, Clone)]
 pub struct Config {
