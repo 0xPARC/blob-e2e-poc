@@ -3499,7 +3499,7 @@ checksum = "7edddbd0b52d732b21ad9a5fab5c704c14cd949e5e9a1ec5929a24fded1b904c"
 [[package]]
 name = "plonky2"
 version = "1.1.0"
-source = "git+https://github.com/0xPARC/plonky2?rev=main?rev=111764c318257f340c10bc27c109d22f3f4af12c#111764c318257f340c10bc27c109d22f3f4af12c"
+source = "git+https://github.com/0xPARC/plonky2?rev=main?rev=109d517d09c210ae4c2cee381d3e3fbc04aa3812#109d517d09c210ae4c2cee381d3e3fbc04aa3812"
 dependencies = [
  "ahash",
  "anyhow",
@@ -3525,7 +3525,7 @@ dependencies = [
 [[package]]
 name = "plonky2_field"
 version = "1.0.0"
-source = "git+https://github.com/0xPARC/plonky2?rev=main?rev=111764c318257f340c10bc27c109d22f3f4af12c#111764c318257f340c10bc27c109d22f3f4af12c"
+source = "git+https://github.com/0xPARC/plonky2?rev=main?rev=109d517d09c210ae4c2cee381d3e3fbc04aa3812#109d517d09c210ae4c2cee381d3e3fbc04aa3812"
 dependencies = [
  "anyhow",
  "itertools 0.11.0",
@@ -3540,7 +3540,7 @@ dependencies = [
 [[package]]
 name = "plonky2_maybe_rayon"
 version = "1.0.0"
-source = "git+https://github.com/0xPARC/plonky2?rev=main?rev=111764c318257f340c10bc27c109d22f3f4af12c#111764c318257f340c10bc27c109d22f3f4af12c"
+source = "git+https://github.com/0xPARC/plonky2?rev=main?rev=109d517d09c210ae4c2cee381d3e3fbc04aa3812#109d517d09c210ae4c2cee381d3e3fbc04aa3812"
 dependencies = [
  "rayon",
 ]
@@ -3559,7 +3559,7 @@ dependencies = [
 [[package]]
 name = "plonky2_util"
 version = "1.0.0"
-source = "git+https://github.com/0xPARC/plonky2?rev=main?rev=111764c318257f340c10bc27c109d22f3f4af12c#111764c318257f340c10bc27c109d22f3f4af12c"
+source = "git+https://github.com/0xPARC/plonky2?rev=main?rev=109d517d09c210ae4c2cee381d3e3fbc04aa3812#109d517d09c210ae4c2cee381d3e3fbc04aa3812"
 
 [[package]]
 name = "pod2"

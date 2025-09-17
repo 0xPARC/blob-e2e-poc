@@ -195,7 +195,7 @@ mod tests {
     #[test]
     fn test_payload_roundtrip() {
         let params = Params::default();
-        println!("SrhunkMainPod setup");
+        println!("ShrunkMainPod setup");
         let shrunk_main_pod_build = ShrunkMainPodSetup::new(&params).build().unwrap();
         let common_data = &shrunk_main_pod_build.circuit_data.common;
         let predicates = app::build_predicates(&params);
@@ -251,7 +251,7 @@ mod tests {
             Payload::from_bytes(&payload_update_bytes, common_data).unwrap();
         assert_eq!(payload_update, payload_update_decoded);
 
-        // Veirfy the proof
+        // Verify the proof
 
         println!("Verify shrunk mainPod");
         let st = Statement::Custom(
