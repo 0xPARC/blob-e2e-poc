@@ -33,12 +33,11 @@ pub async fn send_payload(cfg: Config, b: Vec<u8>) -> Result<TxHash> {
     let sidecar: SidecarBuilder<SimpleCoder> = SidecarBuilder::from_slice(&b);
     let sidecar = sidecar.build()?;
 
-    let fees = provider.estimate_eip1559_fees().await?;
-    let blob_base_fee = provider.get_blob_base_fee().await?;
     let tx = TransactionRequest::default()
-        .with_max_fee_per_gas(fees.max_fee_per_gas * 2101 / 1000)
-        .with_max_priority_fee_per_gas(fees.max_priority_fee_per_gas * 2101 / 1000)
-        .with_max_fee_per_blob_gas(blob_base_fee * 2101 / 1000)
+        .with_gas_limit(21_000)
+        .with_max_fee_per_gas(20_000_000_000)
+        .with_max_priority_fee_per_gas(20_000_000_000)
+        .with_max_fee_per_blob_gas(20_000_000_000)
         .with_to(receiver)
         .with_blob_sidecar(sidecar);
 
