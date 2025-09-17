@@ -265,7 +265,6 @@ mod tests {
             proof: shrunk_main_pod_proof,
             public_inputs,
         };
-        dbg!(&proof_with_pis.public_inputs);
         let proof = proof_with_pis
             .decompress(
                 &shrunk_main_pod_build

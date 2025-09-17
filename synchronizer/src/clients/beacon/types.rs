@@ -81,6 +81,8 @@ pub struct ExecutionPayload {
     pub block_hash: B256,
     #[serde(deserialize_with = "deserialize_u32")]
     pub block_number: u32,
+    #[serde(deserialize_with = "deserialize_u64")]
+    pub timestamp: u64,
 }
 
 #[derive(Deserialize, Debug)]

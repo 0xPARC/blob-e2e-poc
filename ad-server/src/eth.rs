@@ -22,7 +22,6 @@ pub async fn send_payload(cfg: Config, b: Vec<u8>) -> Result<TxHash> {
         .wallet(signer.clone())
         .connect(&cfg.rpc_url)
         .await?;
-
     let latest_block = provider.get_block_number().await?;
     println!("Latest block number: {latest_block}");
 
@@ -35,6 +34,10 @@ pub async fn send_payload(cfg: Config, b: Vec<u8>) -> Result<TxHash> {
     let sidecar = sidecar.build()?;
 
     let tx = TransactionRequest::default()
+        .with_gas_limit(21_000)
+        .with_max_fee_per_gas(20_000_000_000)
+        .with_max_priority_fee_per_gas(20_000_000_000)
+        .with_max_fee_per_blob_gas(20_000_000_000)
         .with_to(receiver)
         .with_blob_sidecar(sidecar);
 
