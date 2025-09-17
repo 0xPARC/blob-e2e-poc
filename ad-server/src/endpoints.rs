@@ -57,7 +57,7 @@ pub async fn handler_new_counter(
     // send the payload to ethereum
     let payload_bytes = Payload::Init(PayloadInit {
         id: Hash::from(RawValue::from(new_id)), // TODO hash
-        custom_predicate_ref: pod_config.predicates.update_loop_pred,
+        custom_predicate_ref: pod_config.predicates.update_pred,
         vds_root: pod_config.vd_set.root(),
     })
     .to_bytes();

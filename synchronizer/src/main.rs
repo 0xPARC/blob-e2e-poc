@@ -9,11 +9,13 @@ use alloy_network::Ethereum;
 use alloy_provider::{Provider, RootProvider};
 use anyhow::{Context, Result, anyhow};
 use backoff::ExponentialBackoffBuilder;
+use chrono::{DateTime, Utc};
 use common::{
     circuits::ShrunkMainPodSetup,
     load_dotenv,
     payload::{Payload, PayloadInit, PayloadUpdate},
 };
+use hex::ToHex;
 use plonky2::plonk::proof::CompressedProofWithPublicInputs;
 use pod2::{
     backends::plonky2::{
@@ -36,7 +38,7 @@ use synchronizer::{
     },
 };
 use tokio::{runtime::Runtime, time::sleep};
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
 pub mod endpoints;
@@ -503,6 +505,13 @@ impl Node {
             slot, execution_payload.block_hash, execution_payload.block_number
         );
 
+        info!(
+            "processing slot {} from {}",
+            slot,
+            DateTime::<Utc>::from_timestamp_secs(execution_payload.timestamp as i64)
+                .unwrap_or_default(),
+        );
+
         let has_kzg_blob_commitments = match beacon_block.blob_kzg_commitments {
             Some(commitments) => !commitments.is_empty(),
             None => false,
@@ -581,7 +590,7 @@ impl Node {
                             );
                         }
                         Err(e) => {
-                            debug!("Invalid ad_blob: {:?}", e);
+                            info!("Invalid ad_blob: {:?}", e);
                             continue;
                         }
                     };
@@ -650,7 +659,9 @@ impl Node {
             state: RawValueSql(EMPTY_VALUE),
             blob_versioned_hash,
         };
-        Database(&mut **db_tx).add_ad_update(&ad_update).await
+        Database(&mut **db_tx).add_ad_update(&ad_update).await?;
+        tracing::info!(payload = "Init", ad_id = payload.id.encode_hex::<String>());
+        Ok(())
     }
 
     async fn process_payload_update(
@@ -673,7 +684,6 @@ impl Node {
         );
         let sts_hash = calculate_statements_hash(&[st.into()], &self.params);
         let public_inputs = [sts_hash.0, ad.vds_root.0.0].concat();
-        dbg!(&public_inputs);
         let proof_with_pis = CompressedProofWithPublicInputs {
             proof: payload.shrunk_main_pod_proof,
             public_inputs,
@@ -693,7 +703,15 @@ impl Node {
             state: RawValueSql(payload.new_state),
             blob_versioned_hash,
         };
-        Database(&mut **db_tx).add_ad_update(&ad_update).await
+        Database(&mut **db_tx).add_ad_update(&ad_update).await?;
+        tracing::info!(
+            payload = "Update",
+            ad_id = payload.id.encode_hex::<String>(),
+            num = ad_update.num,
+            old_state = ad_update_last.state.0.encode_hex::<String>(),
+            new_state = payload.new_state.encode_hex::<String>()
+        );
+        Ok(())
     }
 }
 
@@ -742,16 +760,44 @@ async fn main() -> Result<()> {
         .unwrap_or(node.cfg.ad_genesis_slot)
         .max(node.cfg.ad_genesis_slot);
 
-    for slot in initial_slot..head.slot {
-        info!("checking slot {}", slot);
-        let beacon_block_header = match node
-            .beacon_cli
-            .get_block_header(BlockId::Slot(slot))
-            .await?
-        {
+    let mut slot = initial_slot;
+    loop {
+        debug!("checking slot {}", slot);
+        let some_beacon_block_header = if slot <= head.slot {
+            node.beacon_cli
+                .get_block_header(BlockId::Slot(slot))
+                .await?
+        } else {
+            // TODO: Be more fancy and replace this with a stream from an event subscription to
+            // Beacon Headers
+            tokio::time::sleep(Duration::from_secs(5)).await;
+            loop {
+                let head = node
+                    .beacon_cli
+                    .get_block_header(BlockId::Head)
+                    .await?
+                    .expect("head is not None");
+                if head.slot > slot {
+                    debug!(
+                        "head is {}, slot {} was skipped, retreiving...",
+                        head.slot, slot
+                    );
+                    break node
+                        .beacon_cli
+                        .get_block_header(BlockId::Slot(slot))
+                        .await?;
+                } else if head.slot == slot {
+                    break Some(head);
+                }
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
+        };
+        let beacon_block_header = match some_beacon_block_header {
             Some(block) => block,
             None => {
                 debug!("slot {} has empty block", slot);
+                Database(&node.db).add_visited_slot(slot as i64).await?;
+                slot += 1;
                 continue;
             }
         };
@@ -767,9 +813,7 @@ async fn main() -> Result<()> {
             let delay_ms = 1000 * requests / node.cfg.request_rate;
             sleep(Duration::from_millis(delay_ms)).await;
         }
+
+        slot += 1;
     }
-
-    // TODO: continue waiting for new slots using `node.beacon_cli.subscribe_to_events`
-
-    Ok(())
 }
