@@ -178,11 +178,15 @@ impl PayloadUpdate {
 
 #[cfg(test)]
 mod tests {
+    use plonky2::plonk::proof::CompressedProofWithPublicInputs;
     use pod2::{
-        backends::plonky2::{basetypes::DEFAULT_VD_SET, mainpod::Prover},
+        backends::plonky2::{
+            basetypes::DEFAULT_VD_SET,
+            mainpod::{Prover, calculate_statements_hash},
+        },
         dict,
         frontend::MainPodBuilder,
-        middleware::Params,
+        middleware::{Params, Statement, Value},
     };
 
     use super::*;
@@ -191,22 +195,23 @@ mod tests {
     #[test]
     fn test_payload_roundtrip() {
         let params = Params::default();
-        println!("SrhunkMainPod setup");
+        println!("ShrunkMainPod setup");
         let shrunk_main_pod_build = ShrunkMainPodSetup::new(&params).build().unwrap();
         let common_data = &shrunk_main_pod_build.circuit_data.common;
+        let predicates = app::build_predicates(&params);
         let id = Hash([F(1), F(2), F(3), F(4)]);
         let custom_predicate_ref = CustomPredicateRef {
             batch: CustomPredicateBatch::new_opaque(
                 "unknown".to_string(),
-                Hash([F(5), F(6), F(7), F(8)]),
+                predicates.update_pred.batch.id(),
             ),
-            index: 3,
+            index: predicates.update_pred.index,
         };
         let vd_set = &*DEFAULT_VD_SET;
         let vds_root = vd_set.root();
         let payload_init = Payload::Init(PayloadInit {
             id,
-            custom_predicate_ref,
+            custom_predicate_ref: custom_predicate_ref.clone(),
             vds_root,
         });
 
@@ -223,6 +228,7 @@ mod tests {
         let count = 6;
         let op = dict!(32, {"name" => "inc", "n" => count}).unwrap();
         let (new_state, st_update) = helper.st_update(state, &[op]);
+        println!("st: {st_update:?}");
         builder.reveal(&st_update);
 
         println!("MainPod prove");
@@ -235,7 +241,7 @@ mod tests {
 
         let payload_update = Payload::Update(PayloadUpdate {
             id,
-            shrunk_main_pod_proof,
+            shrunk_main_pod_proof: shrunk_main_pod_proof.clone(),
             new_state: RawValue::from(new_state),
         });
 
@@ -244,5 +250,31 @@ mod tests {
         let payload_update_decoded =
             Payload::from_bytes(&payload_update_bytes, common_data).unwrap();
         assert_eq!(payload_update, payload_update_decoded);
+
+        // Verify the proof
+
+        println!("Verify shrunk mainPod");
+        let st = Statement::Custom(
+            custom_predicate_ref,
+            vec![Value::from(new_state), Value::from(state)],
+        );
+        println!("st: {st:?}");
+        let sts_hash = calculate_statements_hash(&[st.into()], &params);
+        let public_inputs = [sts_hash.0, vds_root.0].concat();
+        let proof_with_pis = CompressedProofWithPublicInputs {
+            proof: shrunk_main_pod_proof,
+            public_inputs,
+        };
+        dbg!(&proof_with_pis.public_inputs);
+        let proof = proof_with_pis
+            .decompress(
+                &shrunk_main_pod_build
+                    .circuit_data
+                    .verifier_only
+                    .circuit_digest,
+                &shrunk_main_pod_build.circuit_data.common,
+            )
+            .unwrap();
+        shrunk_main_pod_build.circuit_data.verify(proof).unwrap();
     }
 }
