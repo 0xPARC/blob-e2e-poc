@@ -779,7 +779,7 @@ async fn main() -> Result<()> {
                     .expect("head is not None");
                 if head.slot > slot {
                     debug!(
-                        "head is {}, slot {} was skipped, retreiving...",
+                        "head is {}, slot {} was skipped, retrieving...",
                         head.slot, slot
                     );
                     break node
