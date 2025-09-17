@@ -228,7 +228,7 @@ mod tests {
         let count = 6;
         let op = dict!(32, {"name" => "inc", "n" => count}).unwrap();
         let (new_state, st_update) = helper.st_update(state, &[op]);
-        println!("st: {:?}", st_update);
+        println!("st: {st_update:?}");
         builder.reveal(&st_update);
 
         println!("MainPod prove");
@@ -258,7 +258,7 @@ mod tests {
             custom_predicate_ref,
             vec![Value::from(new_state), Value::from(state)],
         );
-        println!("st: {:?}", st);
+        println!("st: {st:?}");
         let sts_hash = calculate_statements_hash(&[st.into()], &params);
         let public_inputs = [sts_hash.0, vds_root.0].concat();
         let proof_with_pis = CompressedProofWithPublicInputs {
