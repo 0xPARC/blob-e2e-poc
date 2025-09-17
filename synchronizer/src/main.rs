@@ -38,7 +38,7 @@ use synchronizer::{
     },
 };
 use tokio::{runtime::Runtime, time::sleep};
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
 pub mod endpoints;
