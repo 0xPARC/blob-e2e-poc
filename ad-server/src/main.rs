@@ -26,6 +26,7 @@ pub struct Config {
     pub priv_key: String,
     // The address that receives AD update via blobs
     pub to_addr: Address,
+    pub tx_watch_timeout: u64,
 }
 
 impl Config {
@@ -38,6 +39,7 @@ impl Config {
             sqlite_path: var("AD_SERVER_SQLITE_PATH")?,
             priv_key: var("PRIV_KEY")?,
             to_addr: Address::from_str(&var("TO_ADDR")?)?,
+            tx_watch_timeout: u64::from_str(&var("TX_WATCH_TIMEOUT")?)?,
         })
     }
 }
