@@ -112,7 +112,7 @@ async fn send_tx<'async_recursion>(
         Err(e) => {
             if e.to_string().contains("Too Many Requests") {
                 // NOTE: this assumes we're using infura for the rpc_url
-                panic!("error: {}", e);
+                return Err(anyhow!("rpc-error: {}", e));
             }
 
             println!("tx err: {}", e);
