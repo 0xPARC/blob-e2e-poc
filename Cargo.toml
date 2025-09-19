@@ -11,6 +11,9 @@ alloy = { version = "1.0.13", features = [
     "eips",
     "full",
     "json-rpc",
+    "hyper", #
+    "transport-http", #
+    "signer-local", #
     "rpc-client",
     "rpc-types-beacon"
 ] }
