@@ -8,6 +8,7 @@ use alloy::{
     signers::local::PrivateKeySigner,
 };
 use anyhow::{Result, anyhow};
+use tracing::{debug, info};
 
 use crate::Config;
 
@@ -23,12 +24,12 @@ pub async fn send_payload(cfg: Config, b: Vec<u8>) -> Result<TxHash> {
         .connect(&cfg.rpc_url)
         .await?;
     let latest_block = provider.get_block_number().await?;
-    println!("Latest block number: {latest_block}");
+    info!("Latest block number: {latest_block}");
 
     let sender = signer.address();
     let receiver = Address::from([0x42; 20]);
-    dbg!(&sender);
-    dbg!(&receiver);
+    debug!("{}", sender);
+    debug!("{}", receiver);
 
     let sidecar: SidecarBuilder<SimpleCoder> = SidecarBuilder::from_slice(&b);
     let sidecar = sidecar.build()?;
@@ -39,18 +40,10 @@ pub async fn send_payload(cfg: Config, b: Vec<u8>) -> Result<TxHash> {
     // for a new tx, increase gas price by 10% to reduce the chances of the
     // nodes rejecting it (in practice increase it by 11% to ensure it passes
     // the miner filter)
-    let (receipt, tx_hash) = send_tx(
-        cfg,
-        provider,
-        receiver,
-        sidecar,
-        fees,
-        blob_base_fee,
-        111 / 100,
-    )
-    .await?;
+    let (receipt, tx_hash) =
+        send_tx(cfg, provider, receiver, sidecar, fees, blob_base_fee, 11).await?;
 
-    println!(
+    info!(
         "Transaction included in block {}",
         receipt.block_number.expect("Failed to get block number")
     );
@@ -93,18 +86,20 @@ async fn send_tx<'async_recursion>(
     sidecar: alloy::eips::eip4844::BlobTransactionSidecar,
     fees: Eip1559Estimation,
     blob_base_fee: u128,
-    increase_ratio: u128,
+    increase_percentage: u128,
 ) -> Result<(TransactionReceipt, TxHash)> {
     let tx = TransactionRequest::default()
-        .with_max_fee_per_gas(fees.max_fee_per_gas * increase_ratio)
-        .with_max_priority_fee_per_gas(fees.max_priority_fee_per_gas * increase_ratio)
-        .with_max_fee_per_blob_gas(blob_base_fee * increase_ratio)
+        .with_max_fee_per_gas(fees.max_fee_per_gas * (100 + increase_percentage) / 100)
+        .with_max_priority_fee_per_gas(
+            fees.max_priority_fee_per_gas * (100 + increase_percentage) / 100,
+        )
+        .with_max_fee_per_blob_gas(blob_base_fee * (100 + increase_percentage) / 100)
         .with_to(receiver)
         .with_blob_sidecar(sidecar.clone());
 
-    dbg!(&tx.max_fee_per_gas.unwrap());
-    dbg!(&tx.max_priority_fee_per_gas.unwrap());
-    dbg!(&tx.max_fee_per_blob_gas.unwrap());
+    debug!("{}", tx.max_fee_per_gas.unwrap());
+    debug!("{}", tx.max_priority_fee_per_gas.unwrap());
+    debug!("{}", tx.max_fee_per_blob_gas.unwrap());
 
     let send_tx_result = provider.send_transaction(tx).await;
     let pending_tx_result = match send_tx_result {
@@ -115,8 +110,8 @@ async fn send_tx<'async_recursion>(
                 return Err(anyhow!("rpc-error: {}", e));
             }
 
-            println!("tx err: {}", e);
-            println!("sending tx again with 2x gas price");
+            info!("tx err: {}", e);
+            info!("sending tx again with 2x gas price");
             return send_tx(
                 cfg,
                 provider,
@@ -124,18 +119,18 @@ async fn send_tx<'async_recursion>(
                 sidecar,
                 fees,
                 blob_base_fee,
-                increase_ratio * 2,
+                increase_percentage + 100,
             )
             .await;
         }
     };
-    println!("watching pending tx, timeout of {}", cfg.tx_watch_timeout);
+    info!("watching pending tx, timeout of {}", cfg.tx_watch_timeout);
     let pending_tx_result = pending_tx_result
         .with_timeout(Some(std::time::Duration::from_secs(cfg.tx_watch_timeout)))
         .watch()
         .await;
 
-    dbg!("sent");
+    debug!("sent");
     let tx_hash = match pending_tx_result {
         Ok(pending_tx) => pending_tx,
         Err(e) => {
@@ -143,8 +138,8 @@ async fn send_tx<'async_recursion>(
                 panic!("error: {}", e);
             }
 
-            println!("tx err: {}", e);
-            println!("sending tx again with 2x gas price");
+            info!("tx err: {}", e);
+            info!("sending tx again with 2x gas price");
             return send_tx(
                 cfg,
                 provider,
@@ -152,17 +147,17 @@ async fn send_tx<'async_recursion>(
                 sidecar,
                 fees,
                 blob_base_fee,
-                increase_ratio * 2,
+                increase_percentage + 100,
             )
             .await;
         }
     };
-    println!("Pending transaction... tx hash: {}", tx_hash);
+    info!("Pending transaction... tx hash: {}", tx_hash);
 
     let receipt = match provider.get_transaction_receipt(tx_hash).await? {
         Some(receipt) => receipt,
         None => {
-            println!("get_transaction_receipt failed, resending tx");
+            info!("get_transaction_receipt failed, resending tx");
             return send_tx(
                 cfg,
                 provider,
@@ -170,7 +165,7 @@ async fn send_tx<'async_recursion>(
                 sidecar,
                 fees,
                 blob_base_fee,
-                increase_ratio * 2,
+                increase_percentage + 100,
             )
             .await;
         }
@@ -181,17 +176,16 @@ async fn send_tx<'async_recursion>(
 
 #[cfg(test)]
 mod tests {
-    use tracing::info;
-
     use super::*;
 
     // this test is mostly to check the send_payload method isolated from the
     // rest of the AD server logic
     #[tokio::test]
     async fn test_tx() -> anyhow::Result<()> {
+        crate::log_init();
         common::load_dotenv()?;
         let cfg = Config::from_env()?;
-        info!(?cfg, "Loaded config");
+        println!("Loaded config: {:?}", cfg);
 
         let tx_hash = send_payload(cfg, b"test".to_vec()).await?;
         dbg!(tx_hash);

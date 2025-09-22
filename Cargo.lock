@@ -21,6 +21,8 @@ dependencies = [
  "sqlx",
  "tokio",
  "tracing",
+ "tracing-log 0.1.4",
+ "tracing-subscriber",
  "warp",
 ]
 
@@ -1365,6 +1367,8 @@ dependencies = [
  "plonky2",
  "pod2",
  "sqlx",
+ "tracing",
+ "tracing-log 0.1.4",
  "warp",
 ]
 

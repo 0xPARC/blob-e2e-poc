@@ -12,6 +12,8 @@ warp = { workspace = true }
 pod2 = { workspace = true }
 plonky2 = { workspace = true }
 itertools = "0.14.0"
+tracing = { workspace = true }
+tracing-log = { workspace = true }
 
 [dev-dependencies]
 app = { path = "../app" }
