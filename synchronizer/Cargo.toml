@@ -15,6 +15,9 @@ sqlx = { workspace = true }
 log = { workspace = true }
 warp = { workspace = true }
 hex = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tracing-log = { workspace = true }
 
 common = { path = "../common" }
 
@@ -29,9 +32,5 @@ url = { version = "2.3.1", features = ["serde"] }
 # alloy-eips = { version = "1.0.30" }
 # alloy-network = { version = "1.0.30" }
 
-# logging
-tracing = "0.1.19"
-tracing-subscriber = { version = "0.3", features = ["registry", "env-filter" ] }
-tracing-log = "0.1.1"
 
 chrono = "0.4.42"

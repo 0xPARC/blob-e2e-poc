@@ -19,6 +19,7 @@ use pod2::{
     },
     middleware::{C, CommonCircuitData, D, F, Params, ToFields, VerifierCircuitData},
 };
+use tracing::info;
 
 pub struct ShrunkMainPodSetup {
     params: Params,
@@ -129,7 +130,7 @@ impl ShrunkMainPodBuild {
         self.shrunk_main_pod
             .set_targets(&mut pw, &pod_proof_with_pis)?;
         let proof = self.circuit_data.prove(pw)?;
-        println!("[TIME] shrunk MainPod proof took: {:?}", start.elapsed());
+        info!("[TIME] shrunk MainPod proof took: {:?}", start.elapsed());
 
         // sanity check: verify proof
         self.circuit_data.verify(proof.clone())?;
@@ -148,7 +149,7 @@ pub fn shrink_compress_pod(
     let start = Instant::now();
     let proof_with_pis = shrunk_main_pod_build.prove(pod)?;
     // let (verifier_data, common_circuit_data, proof_with_pis) = prove_pod(pod)?;
-    println!("[TIME] plonky2 (wrapper) proof took: {:?}", start.elapsed());
+    info!("[TIME] plonky2 (wrapper) proof took: {:?}", start.elapsed());
 
     // this next line performs the method `fri_query_indices`, which is not exposed
     let indices = proof_with_pis

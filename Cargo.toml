@@ -11,6 +11,9 @@ alloy = { version = "1.0.13", features = [
     "eips",
     "full",
     "json-rpc",
+    "hyper", #
+    "transport-http", #
+    "signer-local", #
     "rpc-client",
     "rpc-types-beacon"
 ] }
@@ -24,6 +27,11 @@ anyhow = "1.0.56"
 sqlx = { version="0.8.6", features = ["sqlite", "chrono", "runtime-tokio"] }
 warp = "0.3"
 hex = "0.4.3"
+
+# logging
+tracing = "0.1.19"
+tracing-subscriber = { version = "0.3", features = ["registry", "env-filter" ] }
+tracing-log = "0.1.1"
 
 # [patch."https://github.com/0xPARC/pod2"]
 # pod2 = { path = "../pod2" }

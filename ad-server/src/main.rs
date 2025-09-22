@@ -26,6 +26,7 @@ pub struct Config {
     pub priv_key: String,
     // The address that receives AD update via blobs
     pub to_addr: Address,
+    pub tx_watch_timeout: u64,
 }
 
 impl Config {
@@ -38,6 +39,7 @@ impl Config {
             sqlite_path: var("AD_SERVER_SQLITE_PATH")?,
             priv_key: var("PRIV_KEY")?,
             to_addr: Address::from_str(&var("TO_ADDR")?)?,
+            tx_watch_timeout: u64::from_str(&var("TX_WATCH_TIMEOUT")?)?,
         })
     }
 }
@@ -49,8 +51,17 @@ pub struct PodConfig {
     predicates: Predicates,
 }
 
+use tracing_subscriber::{EnvFilter, fmt, prelude::*};
+fn log_init() {
+    tracing_subscriber::registry()
+        .with(fmt::layer())
+        .with(EnvFilter::from_default_env())
+        .init();
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
+    log_init();
     common::load_dotenv()?;
     let cfg = Config::from_env()?;
     info!(?cfg, "Loaded config");
@@ -64,9 +75,9 @@ async fn main() -> Result<()> {
 
     // initialize pod data
     let params = Params::default();
-    println!("Prebuilding circuits to calculate vd_set...");
+    info!("Prebuilding circuits to calculate vd_set...");
     let vd_set = &*DEFAULT_VD_SET;
-    println!("vd_set calculation complete");
+    info!("vd_set calculation complete");
     let predicates = build_predicates(&params);
     let shrunk_main_pod_build = Arc::new(ShrunkMainPodSetup::new(&params).build()?);
     let pod_config = PodConfig {
@@ -76,7 +87,7 @@ async fn main() -> Result<()> {
     };
 
     let routes = endpoints::routes(cfg, db_pool, pod_config, shrunk_main_pod_build);
-    println!("server at http://0.0.0.0:8000");
+    info!("server at http://0.0.0.0:8000");
     warp::serve(routes).run(([0, 0, 0, 0], 8000)).await;
 
     Ok(())
