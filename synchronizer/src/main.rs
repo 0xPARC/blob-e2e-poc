@@ -38,7 +38,7 @@ use synchronizer::{
     },
 };
 use tokio::{runtime::Runtime, time::sleep};
-use tracing::{debug, info};
+use tracing::{debug, info, trace};
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
 pub mod endpoints;
@@ -474,6 +474,12 @@ impl Node {
         })
     }
 
+    async fn get_blobs(&self, slot: u32) -> Result<Vec<Blob>> {
+        let blobs = self.beacon_cli.get_blobs(slot.into()).await?;
+        debug!("got {} AD blobs from beacon_cli", blobs.len());
+        Ok(blobs)
+    }
+
     async fn process_beacon_block_header(
         &self,
         db_tx: &mut sqlx::SqliteTransaction<'_>,
@@ -531,11 +537,14 @@ impl Node {
             .await?
             .with_context(|| format!("Execution block {execution_block_hash} not found"))?;
 
-        let indexed_blob_txs: Vec<_> = match execution_block.transactions.as_transactions() {
+        let indexed_ad_blob_txs: Vec<_> = match execution_block.transactions.as_transactions() {
             Some(txs) => txs
                 .iter()
                 .enumerate()
-                .filter(|(_index, tx)| tx.inner.blob_versioned_hashes().is_some())
+                .filter(|(_index, tx)| {
+                    tx.inner.blob_versioned_hashes().is_some()
+                        && tx.as_recovered().to() == Some(self.cfg.to_addr)
+                })
                 .collect(),
             None => {
                 return Err(anyhow!(
@@ -544,67 +553,55 @@ impl Node {
             }
         };
 
-        if indexed_blob_txs.is_empty() {
-            return Err(anyhow!(
-                "Block mismatch: Consensus block \"{beacon_block_root}\" contains blob KZG commitments, but the corresponding execution block \"{execution_block_hash:#?}\" does not contain any blob transactions"
-            ));
+        if indexed_ad_blob_txs.is_empty() {
+            return Ok(None);
         }
 
-        let blobs = self.beacon_cli.get_blobs(slot.into()).await?;
-        debug!("found {} blobs", blobs.len());
+        let blobs = self.get_blobs(slot).await?;
 
         let blobs_vh: Vec<_> = blobs
             .iter()
             .map(|blob| kzg_to_versioned_hash(blob.kzg_commitment.as_ref()))
             .collect();
 
-        for (_tx_index, tx) in indexed_blob_txs {
+        for (_tx_index, tx) in indexed_ad_blob_txs {
             let tx = tx.as_recovered();
             let hash = tx.hash();
             let from = tx.signer();
-            let to = match tx.to() {
-                Some(to) => to,
-                None => continue, // blob in a CREATE tx
-            };
+            let to = tx.to();
             let tx_blobs_vh = tx.blob_versioned_hashes().expect("tx has blobs");
-            let tx_blob_indices: Vec<_> = tx_blobs_vh
+            let tx_blobs: Vec<_> = tx_blobs_vh
                 .iter()
                 .map(|tx_blob_vh| {
                     blobs_vh
                         .iter()
-                        .position(|blob_vh| blob_vh == tx_blob_vh)
+                        .enumerate()
+                        .find_map(|(i, blob_vh)| (blob_vh == tx_blob_vh).then_some(&blobs[i]))
                         .expect("blob in beacon block")
                 })
                 .collect();
-            debug!(?hash, ?from, ?to, ?tx_blob_indices);
+            trace!(?hash, ?from, ?to);
 
-            if self.cfg.to_addr == to {
-                for blob_index in tx_blob_indices.iter() {
-                    let blob = &blobs[*blob_index];
-                    info!("Found AD blob");
-                    match self.process_ad_blob(db_tx, blob).await {
-                        Ok(_) => {
-                            info!(
-                                "Valid ad_blob at slot {}, blob_index {}!",
-                                slot, *blob_index
-                            );
-                        }
-                        Err(e) => {
-                            info!("Invalid ad_blob: {:?}", e);
-                            continue;
-                        }
-                    };
+            for blob in tx_blobs.iter() {
+                match self.process_ad_blob(db_tx, blob).await {
+                    Ok(_) => {
+                        info!("Valid ad_blob at slot {}, blob_index {}!", slot, blob.index);
+                    }
+                    Err(e) => {
+                        info!("Invalid ad_blob: {:?}", e);
+                        continue;
+                    }
+                };
 
-                    Database(&mut **db_tx)
-                        .add_blob(&tables::Blob {
-                            versioned_hash: kzg_to_versioned_hash(blob.kzg_commitment.as_ref()).0,
-                            slot: slot as i64,
-                            block: execution_block.header.number as i64,
-                            blob_index: *blob_index as i64,
-                            timestamp: execution_block.header.timestamp as i64,
-                        })
-                        .await?;
-                }
+                Database(&mut **db_tx)
+                    .add_blob(&tables::Blob {
+                        versioned_hash: kzg_to_versioned_hash(blob.kzg_commitment.as_ref()).0,
+                        slot: slot as i64,
+                        block: execution_block.header.number as i64,
+                        blob_index: blob.index as i64,
+                        timestamp: execution_block.header.timestamp as i64,
+                    })
+                    .await?;
             }
         }
         Ok(Some(()))
@@ -660,7 +657,7 @@ impl Node {
             blob_versioned_hash,
         };
         Database(&mut **db_tx).add_ad_update(&ad_update).await?;
-        tracing::info!(payload = "Init", ad_id = payload.id.encode_hex::<String>());
+        info!(payload = "Init", ad_id = payload.id.encode_hex::<String>());
         Ok(())
     }
 
@@ -704,7 +701,7 @@ impl Node {
             blob_versioned_hash,
         };
         Database(&mut **db_tx).add_ad_update(&ad_update).await?;
-        tracing::info!(
+        info!(
             payload = "Update",
             ad_id = payload.id.encode_hex::<String>(),
             num = ad_update.num,
