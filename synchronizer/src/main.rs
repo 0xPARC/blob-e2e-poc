@@ -1,9 +1,22 @@
 #![allow(clippy::uninlined_format_args)]
-use std::{str::FromStr, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    fs::{File, create_dir_all, read_dir, rename},
+    io,
+    io::{Read, Write},
+    path::PathBuf,
+    str::FromStr,
+    sync::Arc,
+    time::Duration,
+};
 
 use alloy::{
-    consensus::Transaction, eips as alloy_eips, eips::eip4844::kzg_to_versioned_hash,
-    network as alloy_network, primitives::Address, providers as alloy_provider,
+    consensus::Transaction,
+    eips as alloy_eips,
+    eips::eip4844::kzg_to_versioned_hash,
+    network as alloy_network,
+    primitives::{Address, FixedBytes},
+    providers as alloy_provider,
 };
 use alloy_network::Ethereum;
 use alloy_provider::{Provider, RootProvider};
@@ -70,6 +83,8 @@ pub struct Config {
     pub rpc_url: String,
     // The path to the sqlite database (it will be a file)
     pub sqlite_path: String,
+    // The path to the ad blob storage directory
+    pub blobs_path: String,
     // The slot where the AD updates begins
     pub ad_genesis_slot: u32,
     // The address that receives AD update via blobs
@@ -87,6 +102,7 @@ impl Config {
             beacon_url: var("BEACON_URL")?,
             rpc_url: var("RPC_URL")?,
             sqlite_path: var("SYNCHRONIZER_SQLITE_PATH")?,
+            blobs_path: var("BLOBS_PATH")?,
             ad_genesis_slot: u32::from_str(&var("AD_GENESIS_SLOT")?)?,
             to_addr: Address::from_str(&var("TO_ADDR")?)?,
             request_rate: u64::from_str(&var("REQUEST_RATE")?)?,
@@ -474,10 +490,113 @@ impl Node {
         })
     }
 
-    async fn get_blobs(&self, slot: u32) -> Result<Vec<Blob>> {
-        let blobs = self.beacon_cli.get_blobs(slot.into()).await?;
-        debug!("got {} AD blobs from beacon_cli", blobs.len());
+    fn slot_dir(&self, slot: u32) -> PathBuf {
+        let slot_hi = slot / 1_000_000;
+        let slot_mid = (slot - slot_hi * 1_000_000) / 1_000;
+        let slot_lo = slot - slot_hi * 1_000_000 - slot_mid * 1_000;
+        let slot_dir: PathBuf = [
+            &self.cfg.blobs_path,
+            &format!("{:03}", slot_hi),
+            &format!("{:03}", slot_mid),
+            &format!("{:03}", slot_lo),
+        ]
+        .iter()
+        .collect();
+        slot_dir
+    }
+
+    async fn load_blobs_disk(&self, slot: u32) -> Result<HashMap<FixedBytes<32>, Blob>> {
+        let slot_dir = self.slot_dir(slot);
+        let rd = match read_dir(&slot_dir) {
+            Err(e) => {
+                if e.kind() == io::ErrorKind::NotFound {
+                    return Ok(HashMap::new());
+                } else {
+                    return Err(e.into());
+                }
+            }
+            Ok(rd) => rd,
+        };
+        debug!("loading blobs of slot {} from {:?}", slot, slot_dir);
+        let mut blobs = HashMap::new();
+        for entry in rd {
+            let entry = entry?;
+            let file_name = entry.file_name();
+            let file_name = file_name.to_str().unwrap_or("");
+            if file_name.starts_with("blob-") && file_name.ends_with(".cbor") {
+                let file_path = slot_dir.join(file_name);
+                let mut file = File::open(&file_path)?;
+                dbg!(&file_path);
+                let mut data_cbor = Vec::new();
+                file.read_to_end(&mut data_cbor)?;
+                let blob: Blob = minicbor_serde::from_slice(&data_cbor)?;
+                let versioned_hash = kzg_to_versioned_hash(blob.kzg_commitment.as_ref());
+                blobs.insert(versioned_hash, blob);
+            }
+        }
         Ok(blobs)
+    }
+
+    async fn store_blobs_disk(
+        &self,
+        slot: u32,
+        blobs: &HashMap<FixedBytes<32>, Blob>,
+    ) -> Result<()> {
+        let slot_dir = self.slot_dir(slot);
+        debug!("storing blobs of slot {} to {:?}", slot, slot_dir);
+        create_dir_all(&slot_dir)?;
+        for (vh, blob) in blobs {
+            let name = format!("blob-{}.cbor", vh);
+            let blob_path = slot_dir.join(&name);
+            let blob_path_tmp = slot_dir.join(format!("{}.tmp", name));
+            let mut file_tmp = File::create(&blob_path_tmp)?;
+            let blob_cbor = minicbor_serde::to_vec(blob)?;
+            file_tmp.write_all(&blob_cbor)?;
+            rename(blob_path_tmp, blob_path)?;
+        }
+        Ok(())
+    }
+
+    // Checks that the blobs contain all the blobs identified by `versioned_hashes`.  If some are
+    // missing, return the versioned_hash of the first missing one.
+    fn validate_blobs(
+        blobs: &HashMap<FixedBytes<32>, Blob>,
+        versioned_hashes: &[FixedBytes<32>],
+    ) -> Option<FixedBytes<32>> {
+        for vh in versioned_hashes.iter() {
+            if !blobs.contains_key(vh) {
+                return Some(*vh);
+            }
+        }
+        None
+    }
+
+    async fn get_blobs(
+        &self,
+        slot: u32,
+        versioned_hashes: &[FixedBytes<32>],
+    ) -> Result<HashMap<FixedBytes<32>, Blob>> {
+        let blobs = self.load_blobs_disk(slot).await?;
+        if Self::validate_blobs(&blobs, versioned_hashes).is_some() {
+            let blobs = self.beacon_cli.get_blobs(slot.into()).await?;
+            debug!("got {} AD blobs from beacon_cli", blobs.len());
+            let blobs: HashMap<_, _> = blobs
+                .into_iter()
+                .filter_map(|blob| {
+                    let versioned_hash = kzg_to_versioned_hash(blob.kzg_commitment.as_ref());
+                    versioned_hashes
+                        .contains(&versioned_hash)
+                        .then_some((versioned_hash, blob))
+                })
+                .collect();
+            if let Some(vh) = Self::validate_blobs(&blobs, versioned_hashes) {
+                return Err(anyhow!("Blob {} not found in beacon_cli response", vh));
+            }
+            self.store_blobs_disk(slot, &blobs).await?;
+            Ok(blobs)
+        } else {
+            Ok(blobs)
+        }
     }
 
     async fn process_beacon_block_header(
@@ -557,28 +676,27 @@ impl Node {
             return Ok(None);
         }
 
-        let blobs = self.get_blobs(slot).await?;
-
-        let blobs_vh: Vec<_> = blobs
+        let txs_blobs_vhs: Vec<FixedBytes<32>> = indexed_ad_blob_txs
             .iter()
-            .map(|blob| kzg_to_versioned_hash(blob.kzg_commitment.as_ref()))
+            .flat_map(|(_, tx)| {
+                tx.as_recovered()
+                    .blob_versioned_hashes()
+                    .expect("tx has blobs")
+            })
+            .cloned()
             .collect();
+        let blobs = self.get_blobs(slot, &txs_blobs_vhs).await?;
 
         for (_tx_index, tx) in indexed_ad_blob_txs {
             let tx = tx.as_recovered();
             let hash = tx.hash();
             let from = tx.signer();
             let to = tx.to();
-            let tx_blobs_vh = tx.blob_versioned_hashes().expect("tx has blobs");
-            let tx_blobs: Vec<_> = tx_blobs_vh
+            let tx_blobs: Vec<_> = tx
+                .blob_versioned_hashes()
+                .expect("tx has blobs")
                 .iter()
-                .map(|tx_blob_vh| {
-                    blobs_vh
-                        .iter()
-                        .enumerate()
-                        .find_map(|(i, blob_vh)| (blob_vh == tx_blob_vh).then_some(&blobs[i]))
-                        .expect("blob in beacon block")
-                })
+                .map(|blob_versioned_hash| &blobs[blob_versioned_hash])
                 .collect();
             trace!(?hash, ?from, ?to);
 

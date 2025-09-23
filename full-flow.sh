@@ -19,7 +19,7 @@ tmux split-window -v
 tmux select-layout even-vertical
 
 # run the AnchoredDatasystem server
-tmux send-keys -t fullflow:0.0 'cargo run --release -p ad-server' C-m
+tmux send-keys -t fullflow:0.0 'RUST_LOG=ad_server=debug cargo run --release -p ad-server' C-m
 
 # run the Synchronizer server
 tmux send-keys -t fullflow:0.1 'RUST_LOG=synchronizer=debug cargo run --release -p synchronizer' C-m
