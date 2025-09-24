@@ -3022,7 +3022,16 @@ version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "734daad4ff3b880f23dc2a675dd74553fa8e583367aa7523f96a16e96a516b62"
 dependencies = [
- "minicbor-derive",
+ "minicbor-derive 0.17.0",
+]
+
+[[package]]
+name = "minicbor"
+version = "2.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4f182275033b808ede9427884caa8e05fa7db930801759524ca7925bd8aa7a82"
+dependencies = [
+ "minicbor-derive 0.18.2",
 ]
 
 [[package]]
@@ -3037,12 +3046,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "minicbor-derive"
+version = "0.18.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b17290c95158a760027059fe3f511970d6857e47ff5008f9e09bffe3d3e1c6af"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.106",
+]
+
+[[package]]
 name = "minicbor-serde"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a05d783cc8c3cdbde9f7ee9eeeef417810278e81fb6289634fdbc952d462fc23"
 dependencies = [
- "minicbor",
+ "minicbor 1.1.0",
+ "serde",
+]
+
+[[package]]
+name = "minicbor-serde"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "546cc904f35809921fa57016a84c97e68d9d27c012e87b9dadc28c233705f783"
+dependencies = [
+ "minicbor 2.1.1",
  "serde",
 ]
 
@@ -3622,7 +3652,7 @@ dependencies = [
  "itertools 0.14.0",
  "lazy_static",
  "log",
- "minicbor-serde",
+ "minicbor-serde 0.5.0",
  "num",
  "num-bigint",
  "pest",
@@ -4976,6 +5006,7 @@ dependencies = [
  "dotenvy",
  "hex",
  "log",
+ "minicbor-serde 0.6.1",
  "plonky2",
  "pod2",
  "reqwest 0.11.27",

@@ -24,7 +24,7 @@
 use std::{fmt, str::FromStr};
 
 use alloy::{consensus::Bytes48, eips::eip4844::HeapBlob, primitives::B256};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, Serializer};
 
 use super::BeaconClient;
 use crate::clients::common::ClientError;
@@ -108,9 +108,9 @@ pub struct BlockResponse {
     pub data: BlockData,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct Blob {
-    #[serde(deserialize_with = "deserialize_u32")]
+    #[serde(deserialize_with = "deserialize_u32", serialize_with = "serialize_u32")]
     pub index: u32,
     pub kzg_commitment: KzgCommitment,
     pub kzg_proof: Proof,
@@ -162,6 +162,13 @@ pub struct HeadEventData {
 #[derive(Deserialize, Debug)]
 pub struct FinalizedCheckpointEventData {
     pub block: B256,
+}
+
+fn serialize_u32<S>(v: &u32, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    serializer.serialize_str(&v.to_string())
 }
 
 fn deserialize_u32<'de, D>(deserializer: D) -> Result<u32, D::Error>
