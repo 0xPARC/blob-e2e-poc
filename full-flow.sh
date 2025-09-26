@@ -12,6 +12,19 @@ DB2_PATH=$(sed -n 's/^SYNCHRONIZER_SQLITE_PATH="\([^"]*\)"/\1/p' .env)
 rm $DB1_PATH
 rm $DB2_PATH
 
+echo -e "build go binary"
+git clone https://github.com/0xPARC/pod2-onchain.git tmp/pod2-onchain
+cd tmp/pod2-onchain
+go build
+mv ./pod2-onchain ../../pod2-onchain
+cd -
+
+echo -e "generate a first pod proof to have a sample for the Groth16 verifier"
+cargo test --release -p common gen_sample_pod_proof -- --nocapture
+
+echo -e "generate Groth16 trusted setup, using the POD's plonky2 sample"
+./pod2-onchain -t -i tmp/podproof -o tmp/grothartifacts
+
 echo -e "opening tmux with 3 panels"
 tmux new-session -d -s fullflow
 tmux split-window -v

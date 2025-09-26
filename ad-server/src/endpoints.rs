@@ -3,8 +3,8 @@ use std::sync::Arc;
 use app::{DEPTH, Helper};
 use common::{
     CustomError,
-    circuits::{ShrunkMainPodBuild, shrink_compress_pod},
     payload::{Payload, PayloadInit, PayloadUpdate},
+    shrink::{ShrunkMainPodBuild, shrink_compress_pod},
 };
 use pod2::{
     backends::plonky2::mainpod::Prover,
@@ -237,7 +237,7 @@ fn with_shrunk_main_pod_build(
 
 #[cfg(test)]
 mod tests {
-    use common::circuits::ShrunkMainPodSetup;
+    use common::shrink::ShrunkMainPodSetup;
     use pod2::{backends::plonky2::basetypes::DEFAULT_VD_SET, middleware::Params};
     use warp::http::StatusCode;
 
@@ -271,7 +271,7 @@ mod tests {
             predicates,
         };
 
-        let api = routes(cfg, db_pool, pod_config, shrunk_main_pod_build);
+        let api = routes(cfg.clone(), db_pool, pod_config, shrunk_main_pod_build);
 
         // set new counter
         let res = warp::test::request()
@@ -285,10 +285,13 @@ mod tests {
         // let received_id: i64 = s.parse()?;
         let resp: NewCounterResp = serde_json::from_slice(res.body()).expect("");
         assert_eq!(resp.id, 1); // counter's id always start at 1
-        assert_eq!(
-            resp.tx_hash.to_string(),
-            "0x0000000000000000000000000000000000000000000000000000000000000000"
-        ); // mock tx hash
+        if cfg.priv_key == "" {
+            // mock tx hash case
+            assert_eq!(
+                resp.tx_hash.to_string(),
+                "0x0000000000000000000000000000000000000000000000000000000000000000"
+            );
+        }
 
         // increment the counter
         let res = warp::test::request()
@@ -301,10 +304,13 @@ mod tests {
 
         // the body should contain the mocked tx hash
         let body: String = serde_json::from_slice(res.body()).unwrap();
-        assert_eq!(
-            body,
-            "0x0000000000000000000000000000000000000000000000000000000000000000"
-        );
+        if cfg.priv_key == "" {
+            // mock tx hash case
+            assert_eq!(
+                body,
+                "0x0000000000000000000000000000000000000000000000000000000000000000"
+            );
+        }
 
         Ok(())
     }

@@ -1,5 +1,17 @@
-pub mod circuits;
 pub mod payload;
+
+/// 2 options to prepare the POD proofs:
+///   A) "groth":
+///     first compute the one extra recursive proof from the given MainPod's proof in
+///     order to shrink it, together with using the bn254's poseidon variant in the
+///     configuration of the plonky2 prover, in order to make it compatible with the
+///     Groth16 circuit.
+///     Then compute a Groth16 proof which verifies the last plonky2 proof
+pub mod groth;
+///   B) "shrink":
+///     first shrinks the given MainPod's proof, and then compresses it,
+///     returning the compressed proof (without public inputs)
+pub mod shrink;
 
 use std::{io, str::FromStr, time::Duration};
 

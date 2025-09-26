@@ -190,7 +190,7 @@ mod tests {
     };
 
     use super::*;
-    use crate::circuits::{ShrunkMainPodSetup, shrink_compress_pod};
+    use crate::shrink::{ShrunkMainPodSetup, shrink_compress_pod};
 
     #[test]
     fn test_payload_roundtrip() {

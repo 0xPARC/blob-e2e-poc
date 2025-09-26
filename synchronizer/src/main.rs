@@ -24,9 +24,9 @@ use anyhow::{Context, Result, anyhow};
 use backoff::ExponentialBackoffBuilder;
 use chrono::{DateTime, Utc};
 use common::{
-    circuits::ShrunkMainPodSetup,
     load_dotenv,
     payload::{Payload, PayloadInit, PayloadUpdate},
+    shrink::ShrunkMainPodSetup,
 };
 use hex::ToHex;
 use plonky2::plonk::proof::CompressedProofWithPublicInputs;

@@ -4,7 +4,7 @@ use std::{str::FromStr, sync::Arc};
 use alloy::primitives::Address;
 use anyhow::{Context, Result};
 use app::{Predicates, build_predicates};
-use common::circuits::ShrunkMainPodSetup;
+use common::shrink::ShrunkMainPodSetup;
 use pod2::{
     backends::plonky2::basetypes::DEFAULT_VD_SET,
     middleware::{Params, VDSet},
