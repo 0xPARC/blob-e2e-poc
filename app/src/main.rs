@@ -1,14 +1,14 @@
 #![allow(clippy::uninlined_format_args)]
 //! Run in real mode: `cargo run --release app`
 //! Run in mock mode: `cargo run --release app -- --mock`
-use std::env;
+use std::{collections::HashSet, env};
 
 use app::{DEPTH, Helper, build_predicates};
 use pod2::{
     backends::plonky2::{basetypes::DEFAULT_VD_SET, mainpod::Prover, mock::mainpod::MockProver},
     dict,
     frontend::MainPodBuilder,
-    middleware::{MainPodProver, Params, VDSet},
+    middleware::{MainPodProver, Params, VDSet, containers::Set},
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -36,7 +36,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let predicates = build_predicates(&params);
 
     // Initial state
-    let state = 0;
+    let state = Set::new(params.max_depth_mt_containers, HashSet::new())?;
 
     // First batch update with 2 updates
     // Update 1: +3

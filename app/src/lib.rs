@@ -5,14 +5,17 @@
 use pod2::{
     frontend::{MainPodBuilder, Operation},
     lang::parse,
-    middleware::{CustomPredicateRef, Key, Params, Statement, containers::Dictionary},
+    middleware::{
+        CustomPredicateRef, Key, Params, Statement,
+        containers::{Dictionary, Set},
+    },
 };
 
 pub const DEPTH: usize = 32;
 
 #[derive(Debug, Clone)]
 pub struct Predicates {
-    pub inc_pred: CustomPredicateRef,
+    pub ins_pred: CustomPredicateRef,
     pub update_pred: CustomPredicateRef,
     pub update_loop_pred: CustomPredicateRef,
 }
@@ -20,12 +23,12 @@ pub struct Predicates {
 pub fn build_predicates(params: &Params) -> Predicates {
     // Operations & Batch View updates
     let input = r#"
-        inc(new, old, op) = AND(
+        ins(new, old, op) = AND(
             // Input validation
-            DictContains(op, "name", "inc")
-            Lt(op.n, 10)
+            DictContains(op, "name", "ins")
+            // TODO: Data validation
             // State transition
-            SumOf(new, old, op.n)
+            SetInsert(new, old, op.data)
         )
 
         update(new, old) = OR(
@@ -35,17 +38,17 @@ pub fn build_predicates(params: &Params) -> Predicates {
 
         update_loop(new, old, private: int, op) = AND(
             update(int, old)
-            inc(new, int, op)
+            ins(new, int, op)
         )
     "#;
 
     let batch = parse(input, params, &[]).unwrap().custom_batch;
 
-    let inc_pred = batch.predicate_ref_by_name("inc").unwrap();
+    let ins_pred = batch.predicate_ref_by_name("ins").unwrap();
     let update_pred = batch.predicate_ref_by_name("update").unwrap();
     let update_loop_pred = batch.predicate_ref_by_name("update_loop").unwrap();
     Predicates {
-        inc_pred,
+        ins_pred,
         update_pred,
         update_loop_pred,
     }
@@ -53,7 +56,7 @@ pub fn build_predicates(params: &Params) -> Predicates {
 
 pub struct Helper<'a> {
     pub builder: &'a mut MainPodBuilder,
-    pub inc_pred: &'a CustomPredicateRef,
+    pub ins_pred: &'a CustomPredicateRef,
     pub update_pred: &'a CustomPredicateRef,
     pub update_loop_pred: &'a CustomPredicateRef,
 }
@@ -62,34 +65,37 @@ impl<'a> Helper<'a> {
     pub fn new(pod_builder: &'a mut MainPodBuilder, predicates: &'a Predicates) -> Self {
         Self {
             builder: pod_builder,
-            inc_pred: &predicates.inc_pred,
+            ins_pred: &predicates.ins_pred,
             update_pred: &predicates.update_pred,
             update_loop_pred: &predicates.update_loop_pred,
         }
     }
-    pub fn st_inc(&mut self, old: i64, op: Dictionary) -> (i64, Statement) {
-        let n = i64::try_from(op.get(&Key::from("n")).unwrap().typed()).unwrap();
-        let new = old + n;
+    pub fn st_ins(&mut self, old: Set, op: Dictionary) -> (Set, Statement) {
+        let data = op.get(&Key::from("data")).unwrap();
+        let mut new = old.clone();
+        new.insert(data).unwrap();
         let st0 = self
             .builder
-            .priv_op(Operation::dict_contains(op.clone(), "name", "inc"))
+            .priv_op(Operation::dict_contains(op.clone(), "name", "ins"))
             .unwrap();
-        let st1 = self.builder.priv_op(Operation::lt((&op, "n"), 10)).unwrap();
-        let st2 = self
+        let st1 = self
             .builder
-            .priv_op(Operation::sum_of(new, old, (&op, "n")))
+            .priv_op(Operation::set_insert(new.clone(), old, (&op, "data")))
             .unwrap();
         (
             new,
             self.builder
-                .priv_op(Operation::custom(self.inc_pred.clone(), [st0, st1, st2]))
+                .priv_op(Operation::custom(self.ins_pred.clone(), [st0, st1]))
                 .unwrap(),
         )
     }
 
-    pub fn st_update(&mut self, mut old: i64, ops: &[Dictionary]) -> (i64, Statement) {
+    pub fn st_update(&mut self, mut old: Set, ops: &[Dictionary]) -> (Set, Statement) {
         let st_none = Statement::None;
-        let eq_st = self.builder.priv_op(Operation::eq(old, old)).unwrap();
+        let eq_st = self
+            .builder
+            .priv_op(Operation::eq(old.clone(), old.clone()))
+            .unwrap();
         let mut st_update_prev = self
             .builder
             .priv_op(Operation::custom(
@@ -98,12 +104,12 @@ impl<'a> Helper<'a> {
             ))
             .unwrap();
         for op in ops {
-            let (new, st_inc) = self.st_inc(old, op.clone());
+            let (new, st_ins) = self.st_ins(old, op.clone());
             let st_update_loop = self
                 .builder
                 .priv_op(Operation::custom(
                     self.update_loop_pred.clone(),
-                    [st_update_prev, st_inc],
+                    [st_update_prev, st_ins],
                 ))
                 .unwrap();
             st_update_prev = self
