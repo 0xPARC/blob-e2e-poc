@@ -10,6 +10,8 @@ use pod2::middleware::{
     C, CommonCircuitData, CustomPredicateBatch, CustomPredicateRef, D, F, Hash, RawValue,
 };
 
+use crate::ProofType;
+
 pub fn write_elems<const N: usize>(bytes: &mut Vec<u8>, elems: &[F; N]) {
     for elem in elems {
         bytes
@@ -138,39 +140,87 @@ impl PayloadInit {
 }
 
 #[derive(Debug, Eq, PartialEq)]
+pub enum PayloadProof {
+    Plonky2(Box<CompressedProof<F, C, D>>),
+    Groth16(Vec<u8>),
+}
+
+impl PayloadProof {
+    pub fn write_bytes(&self, buffer: &mut Vec<u8>) {
+        match self {
+            PayloadProof::Plonky2(shrunk_main_pod_proof) => {
+                buffer
+                    .write_all(&[ProofType::Plonky2.to_byte()])
+                    .expect("byte write");
+                plonky2::util::serialization::Write::write_compressed_proof(
+                    buffer,
+                    shrunk_main_pod_proof,
+                )
+                .expect("vec write");
+            }
+            PayloadProof::Groth16(b) => {
+                buffer
+                    .write_all(&[ProofType::Groth16.to_byte()])
+                    .expect("byte write");
+                buffer
+                    .write_all(&b.len().to_le_bytes())
+                    .expect("g16 proof bytes length write");
+                buffer.write_all(b).expect("g16 proof bytes write");
+            }
+        }
+    }
+    pub fn from_bytes(bytes: &[u8], common_data: &CommonCircuitData) -> Result<(Self, usize)> {
+        let proof_type = ProofType::from_byte(&bytes[0])?;
+        let bytes = &bytes[1..];
+        let (proof, len): (Self, usize) = match proof_type {
+            ProofType::Plonky2 => {
+                let mut buffer = Buffer::new(bytes);
+                let proof = plonky2::util::serialization::Read::read_compressed_proof(
+                    &mut buffer,
+                    common_data,
+                )
+                .map_err(|e| anyhow!("read_compressed_proof: {}", e))?;
+                let len = buffer.pos();
+                (PayloadProof::Plonky2(Box::new(proof)), len)
+            }
+            ProofType::Groth16 => {
+                // get the length
+                let len_bytes: [u8; 8] = bytes[1..9].try_into()?;
+                let len: usize = u64::from_le_bytes(len_bytes) as usize;
+                // return the rest of bytes of the Groth16 proof
+                (PayloadProof::Groth16(bytes[9..9 + len].to_vec()), len)
+            }
+        };
+
+        // len+1 because at the beginning we used the first byte for the
+        // proof_type
+        Ok((proof, len + 1))
+    }
+}
+
+#[derive(Debug, Eq, PartialEq)]
 pub struct PayloadUpdate {
     pub id: Hash,
-    pub shrunk_main_pod_proof: CompressedProof<F, C, D>,
+    pub proof: PayloadProof,
     pub new_state: RawValue,
 }
 
 impl PayloadUpdate {
     pub fn write_bytes(&self, buffer: &mut Vec<u8>) {
         write_elems(buffer, &self.id.0);
-        plonky2::util::serialization::Write::write_compressed_proof(
-            buffer,
-            &self.shrunk_main_pod_proof,
-        )
-        .expect("vec write");
+        self.proof.write_bytes(buffer);
         write_elems(buffer, &self.new_state.0);
     }
 
     pub fn from_bytes(bytes: &[u8], common_data: &CommonCircuitData) -> Result<Self> {
         let mut bytes = bytes;
         let id = Hash(read_elems(&mut bytes)?);
-        let shrunk_main_pod_proof = {
-            let mut buffer = Buffer::new(bytes);
-            let proof =
-                plonky2::util::serialization::Read::read_compressed_proof(&mut buffer, common_data)
-                    .map_err(|e| anyhow!("read_compressed_proof: {}", e))?;
-            let len = buffer.pos();
-            bytes = &bytes[len..];
-            proof
-        };
+        let (proof, len) = PayloadProof::from_bytes(bytes, common_data)?;
+        bytes = &bytes[len..];
         let new_state = RawValue(read_elems(&mut bytes)?);
         Ok(Self {
             id,
-            shrunk_main_pod_proof,
+            proof,
             new_state,
         })
     }
@@ -192,7 +242,7 @@ mod tests {
     };
 
     use super::*;
-    use crate::circuits::{ShrunkMainPodSetup, shrink_compress_pod};
+    use crate::shrink::{ShrunkMainPodSetup, shrink_compress_pod};
 
     #[test]
     fn test_payload_roundtrip() {
@@ -243,7 +293,7 @@ mod tests {
 
         let payload_update = Payload::Update(PayloadUpdate {
             id,
-            shrunk_main_pod_proof: shrunk_main_pod_proof.clone(),
+            proof: PayloadProof::Plonky2(Box::new(shrunk_main_pod_proof.clone())),
             new_state: RawValue::from(new_state.commitment()),
         });
 

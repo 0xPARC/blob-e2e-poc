@@ -105,6 +105,8 @@ impl ShrunkMainPodSetup {
 }
 
 impl ShrunkMainPodBuild {
+    /// computes the one extra recirsive proof from the given MainPod's proof in
+    /// order to shrink it, returns the shrank proof with the public inputs
     pub fn prove(&self, pod: pod2::frontend::MainPod) -> Result<ProofWithPublicInputs> {
         assert_eq!(pod.pod.params(), &self.params);
         assert_eq!(
@@ -112,6 +114,7 @@ impl ShrunkMainPodBuild {
             self.main_pod_verifier_circuit_data.verifier_only
         );
 
+        // generate first MainPod's proof
         let pod_proof: Proof = pod.pod.proof();
         let public_inputs = pod
             .statements_hash()
@@ -125,6 +128,7 @@ impl ShrunkMainPodBuild {
             public_inputs,
         };
 
+        // shrink the MainPod's proof, obtaining a smaller plonky2 proof
         let start = Instant::now();
         let mut pw = PartialWitness::new();
         self.shrunk_main_pod
@@ -139,7 +143,8 @@ impl ShrunkMainPodBuild {
     }
 }
 
-/// returns a compressed proof (without public inputs) for the given MainPod
+/// first it shrinks the given MainPod's proof, and then compresses it,
+/// returning the compressed proof (without public inputs)
 pub fn shrink_compress_pod(
     shrunk_main_pod_build: &ShrunkMainPodBuild,
     pod: pod2::frontend::MainPod,

@@ -178,7 +178,10 @@ mod tests {
     use super::*;
 
     // this test is mostly to check the send_payload method isolated from the
-    // rest of the AD server logic
+    // rest of the AD server logic.
+    // To run it:
+    // RUST_LOG=debug cargo test --release -p ad-server test_tx -- --nocapture --ignored
+    #[ignore]
     #[tokio::test]
     async fn test_tx() -> anyhow::Result<()> {
         crate::log_init();
