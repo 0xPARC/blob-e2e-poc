@@ -1,20 +1,32 @@
 #![allow(clippy::uninlined_format_args)]
-use std::{str::FromStr, sync::Arc};
+use std::{collections::HashMap, str::FromStr, sync::Arc};
 
 use alloy::primitives::Address;
-use anyhow::{Context, Result};
+use anyhow::{Context as _, Result};
 use app::{Predicates, build_predicates};
-use common::circuits::ShrunkMainPodSetup;
+use common::circuits::{ShrunkMainPodBuild, ShrunkMainPodSetup};
 use pod2::{
     backends::plonky2::basetypes::DEFAULT_VD_SET,
     middleware::{Params, VDSet},
 };
-use sqlx::{migrate::MigrateDatabase, sqlite::Sqlite};
+use sqlx::{
+    migrate::MigrateDatabase,
+    sqlite::{Sqlite, SqlitePool},
+};
+use tokio::{
+    sync::{
+        RwLock,
+        mpsc::{self, Sender},
+    },
+    task,
+};
 use tracing::info;
+use uuid::Uuid;
 
 pub mod db;
 pub mod endpoints;
 pub mod eth;
+pub mod queue;
 
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -51,6 +63,34 @@ pub struct PodConfig {
     predicates: Predicates,
 }
 
+pub struct Context {
+    pub cfg: Config,
+    pub db_pool: SqlitePool,
+    pub pod_config: PodConfig,
+    pub shrunk_main_pod_build: ShrunkMainPodBuild,
+    pub queue_tx: Sender<queue::Request>,
+    pub queue_state: RwLock<HashMap<Uuid, queue::State>>,
+}
+
+impl Context {
+    pub fn new(
+        cfg: Config,
+        db_pool: SqlitePool,
+        pod_config: PodConfig,
+        shrunk_main_pod_build: ShrunkMainPodBuild,
+        queue_tx: Sender<queue::Request>,
+    ) -> Self {
+        Self {
+            cfg,
+            db_pool,
+            pod_config,
+            shrunk_main_pod_build,
+            queue_tx,
+            queue_state: RwLock::new(HashMap::new()),
+        }
+    }
+}
+
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 fn log_init() {
     tracing_subscriber::registry()
@@ -79,14 +119,27 @@ async fn main() -> Result<()> {
     let vd_set = &*DEFAULT_VD_SET;
     info!("vd_set calculation complete");
     let predicates = build_predicates(&params);
-    let shrunk_main_pod_build = Arc::new(ShrunkMainPodSetup::new(&params).build()?);
+    let shrunk_main_pod_build = ShrunkMainPodSetup::new(&params).build()?;
     let pod_config = PodConfig {
         params,
         vd_set: vd_set.clone(),
         predicates,
     };
 
-    let routes = endpoints::routes(cfg, db_pool, pod_config, shrunk_main_pod_build);
+    let (queue_tx, queue_rx) = mpsc::channel::<queue::Request>(8);
+    let ctx = Arc::new(Context::new(
+        cfg,
+        db_pool,
+        pod_config,
+        shrunk_main_pod_build,
+        queue_tx,
+    ));
+
+    let routes = endpoints::routes(ctx.clone());
+    task::spawn(async move {
+        queue::handle_loop(ctx, queue_rx).await;
+    });
+
     info!("server at http://0.0.0.0:8000");
     warp::serve(routes).run(([0, 0, 0, 0], 8000)).await;
 

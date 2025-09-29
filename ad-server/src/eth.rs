@@ -12,7 +12,7 @@ use tracing::{debug, info};
 
 use crate::Config;
 
-pub async fn send_payload(cfg: Config, b: Vec<u8>) -> Result<TxHash> {
+pub async fn send_payload(cfg: &Config, b: Vec<u8>) -> Result<TxHash> {
     if cfg.priv_key.is_empty() {
         // test mode, return a mock tx_hash
         return Ok(TxHash::from([0u8; 32]));
@@ -77,11 +77,10 @@ pub async fn send_payload(cfg: Config, b: Vec<u8>) -> Result<TxHash> {
     Ok(tx_hash)
 }
 
-use async_recursion::async_recursion;
-#[async_recursion]
-async fn send_tx<'async_recursion>(
-    cfg: Config,
-    provider: impl alloy::providers::Provider + 'async_recursion + 'static,
+#[async_recursion::async_recursion]
+async fn send_tx(
+    cfg: &Config,
+    provider: impl alloy::providers::Provider + 'static,
     receiver: Address,
     sidecar: alloy::eips::eip4844::BlobTransactionSidecar,
     fees: Eip1559Estimation,
@@ -187,7 +186,7 @@ mod tests {
         let cfg = Config::from_env()?;
         println!("Loaded config: {:?}", cfg);
 
-        let tx_hash = send_payload(cfg, b"test".to_vec()).await?;
+        let tx_hash = send_payload(&cfg, b"test".to_vec()).await?;
         dbg!(tx_hash);
 
         Ok(())

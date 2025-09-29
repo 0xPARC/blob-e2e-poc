@@ -526,7 +526,6 @@ impl Node {
             if file_name.starts_with("blob-") && file_name.ends_with(".cbor") {
                 let file_path = slot_dir.join(file_name);
                 let mut file = File::open(&file_path)?;
-                dbg!(&file_path);
                 let mut data_cbor = Vec::new();
                 file.read_to_end(&mut data_cbor)?;
                 let blob: Blob = minicbor_serde::from_slice(&data_cbor)?;

@@ -17,7 +17,7 @@ alloy = { version = "1.0.13", features = [
     "rpc-client",
     "rpc-types-beacon"
 ] }
-tokio = {version="1.45", features = ["rt-multi-thread", "macros"]}
+tokio = {version="1.45", features = ["rt-multi-thread", "macros", "sync"]}
 plonky2 = { git = "https://github.com/0xPARC/plonky2.git", rev = "767a098d89b8d50d8aacfdce0c0a7222e8760d37" }
 pod2 = { git="https://github.com/0xPARC/pod2", rev = "352b1fdac1bdb476a8afa48e7fa3d70075ae563a", default-features = false, features = ["backend_plonky2", "disk_cache", "zk"]}
 env_logger = { version = "0.11" }
