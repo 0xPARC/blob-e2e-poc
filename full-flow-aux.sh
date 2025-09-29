@@ -9,6 +9,7 @@ echo -e "\ngetting set, response:"
 curl -X GET http://0.0.0.0:8000/set/1
 
 echo -e "\ninserting value into set, response:"
+# The body can be any JSON-serialised POD value, e.g. "Hello world".
 curl --json '{"Int": "33"}' http://0.0.0.0:8000/set/1
 
 echo -e "\ngetting counter, response:"
