@@ -178,6 +178,8 @@ impl PayloadUpdate {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
+
     use plonky2::plonk::proof::CompressedProofWithPublicInputs;
     use pod2::{
         backends::plonky2::{
@@ -186,7 +188,7 @@ mod tests {
         },
         dict,
         frontend::MainPodBuilder,
-        middleware::{Params, Statement, Value},
+        middleware::{Params, Statement, Value, containers},
     };
 
     use super::*;
@@ -224,10 +226,10 @@ mod tests {
         let predicates = app::build_predicates(&params);
         let mut helper = app::Helper::new(&mut builder, &predicates);
 
-        let state = 0;
-        let count = 6;
-        let op = dict!(32, {"name" => "inc", "n" => count}).unwrap();
-        let (new_state, st_update) = helper.st_update(state, &[op]);
+        let state = containers::Set::new(params.max_depth_mt_containers, HashSet::new()).unwrap();
+        let data = Value::from("zero");
+        let op = dict!(32, {"name" => "ins", "data" => data}).unwrap();
+        let (new_state, st_update) = helper.st_update(state.clone(), &[op]);
         println!("st: {st_update:?}");
         builder.reveal(&st_update);
 
@@ -242,7 +244,7 @@ mod tests {
         let payload_update = Payload::Update(PayloadUpdate {
             id,
             shrunk_main_pod_proof: shrunk_main_pod_proof.clone(),
-            new_state: RawValue::from(new_state),
+            new_state: RawValue::from(new_state.commitment()),
         });
 
         println!("PayloadUpdate roundtrip");

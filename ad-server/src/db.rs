@@ -11,7 +11,7 @@ pub struct Set {
     // maybe store also: pod, proof, etc
 }
 
-// TODO
+// TODO: Use better serialisation.
 #[derive(Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct SetContainerSql(pub containers::Set);
 
@@ -86,7 +86,7 @@ pub async fn set_insert(pool: &SqlitePool, id: i64, data: Value) -> Result<Set, 
     // TODO
     new_set
         .insert(&data)
-        .expect("Set should be able to acommodate new entry.");
+        .expect("Set should be able to accommodate new entry.");
 
     let new_set = SetContainerSql(new_set);
     sqlx::query_as::<_, Set>("UPDATE sets SET set_container = ? WHERE id = ?")
