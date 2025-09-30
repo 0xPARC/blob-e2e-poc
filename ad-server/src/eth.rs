@@ -8,6 +8,7 @@ use alloy::{
     signers::local::PrivateKeySigner,
 };
 use anyhow::{Result, anyhow};
+use tokio::time::{Duration, sleep};
 use tracing::{debug, info};
 
 use crate::Config;
@@ -40,8 +41,18 @@ pub async fn send_payload(cfg: &Config, b: Vec<u8>) -> Result<TxHash> {
     // for a new tx, increase gas price by 10% to reduce the chances of the
     // nodes rejecting it (in practice increase it by 11% to ensure it passes
     // the miner filter)
-    let (receipt, tx_hash) =
-        send_tx(cfg, provider, receiver, sidecar, fees, blob_base_fee, 11).await?;
+    let nonce = provider.get_transaction_count(sender).latest().await?;
+    let (receipt, tx_hash) = send_tx(
+        cfg,
+        provider,
+        receiver,
+        nonce,
+        sidecar,
+        fees,
+        blob_base_fee,
+        111,
+    )
+    .await?;
 
     info!(
         "Transaction included in block {}",
@@ -82,23 +93,25 @@ async fn send_tx(
     cfg: &Config,
     provider: impl alloy::providers::Provider + 'static,
     receiver: Address,
+    nonce: u64,
     sidecar: alloy::eips::eip4844::BlobTransactionSidecar,
     fees: Eip1559Estimation,
     blob_base_fee: u128,
-    increase_percentage: u128,
+    fee_percentage: u128,
 ) -> Result<(TransactionReceipt, TxHash)> {
     let tx = TransactionRequest::default()
-        .with_max_fee_per_gas(fees.max_fee_per_gas * (100 + increase_percentage) / 100)
-        .with_max_priority_fee_per_gas(
-            fees.max_priority_fee_per_gas * (100 + increase_percentage) / 100,
-        )
-        .with_max_fee_per_blob_gas(blob_base_fee * (100 + increase_percentage) / 100)
+        .with_max_fee_per_gas(fees.max_fee_per_gas * fee_percentage / 100)
+        .with_max_priority_fee_per_gas(fees.max_priority_fee_per_gas * fee_percentage / 100)
+        .with_max_fee_per_blob_gas(blob_base_fee * fee_percentage / 100)
         .with_to(receiver)
+        .with_nonce(nonce)
         .with_blob_sidecar(sidecar.clone());
 
-    debug!("{}", tx.max_fee_per_gas.unwrap());
-    debug!("{}", tx.max_priority_fee_per_gas.unwrap());
-    debug!("{}", tx.max_fee_per_blob_gas.unwrap());
+    debug!(
+        max_fee_per_gas = tx.max_fee_per_gas.unwrap(),
+        max_priority_fee_per_gas = tx.max_priority_fee_per_gas.unwrap(),
+        max_fee_per_blob_gas = tx.max_fee_per_blob_gas.unwrap()
+    );
 
     let send_tx_result = provider.send_transaction(tx).await;
     let pending_tx_result = match send_tx_result {
@@ -111,14 +124,16 @@ async fn send_tx(
 
             info!("tx err: {}", e);
             info!("sending tx again with 2x gas price");
+            sleep(Duration::from_secs(1)).await;
             return send_tx(
                 cfg,
                 provider,
                 receiver,
+                nonce,
                 sidecar,
                 fees,
                 blob_base_fee,
-                increase_percentage + 100,
+                fee_percentage * 2,
             )
             .await;
         }
@@ -139,14 +154,16 @@ async fn send_tx(
 
             info!("tx err: {}", e);
             info!("sending tx again with 2x gas price");
+            sleep(Duration::from_secs(1)).await;
             return send_tx(
                 cfg,
                 provider,
                 receiver,
+                nonce,
                 sidecar,
                 fees,
                 blob_base_fee,
-                increase_percentage + 100,
+                fee_percentage * 2,
             )
             .await;
         }
@@ -157,14 +174,16 @@ async fn send_tx(
         Some(receipt) => receipt,
         None => {
             info!("get_transaction_receipt failed, resending tx");
+            sleep(Duration::from_secs(1)).await;
             return send_tx(
                 cfg,
                 provider,
                 receiver,
+                nonce,
                 sidecar,
                 fees,
                 blob_base_fee,
-                increase_percentage + 100,
+                fee_percentage * 2,
             )
             .await;
         }
