@@ -12,6 +12,7 @@ use pod2::{
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /*
     env_logger::init();
     let args: Vec<String> = env::args().collect();
     let mock = args.get(1).is_some_and(|arg1| arg1 == "--mock");
@@ -73,6 +74,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let pod = builder.prove(prover).unwrap();
     println!("# pod\n:{}", pod);
     pod.pod.verify().unwrap();
+    */
 
     Ok(())
 }
