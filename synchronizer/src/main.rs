@@ -24,9 +24,9 @@ use anyhow::{Context, Result, anyhow};
 use backoff::ExponentialBackoffBuilder;
 use chrono::{DateTime, Utc};
 use common::{
-    circuits::ShrunkMainPodSetup,
     load_dotenv,
-    payload::{Payload, PayloadInit, PayloadUpdate},
+    payload::{Payload, PayloadInit, PayloadProof, PayloadUpdate},
+    shrink::ShrunkMainPodSetup,
 };
 use hex::ToHex;
 use plonky2::plonk::proof::CompressedProofWithPublicInputs;
@@ -785,8 +785,12 @@ impl Node {
         );
         let sts_hash = calculate_statements_hash(&[st.into()], &self.params);
         let public_inputs = [sts_hash.0, ad.vds_root.0.0].concat();
+        let plonky2_compressed_proof = match payload.proof {
+            PayloadProof::Plonky2(p) => p,
+            _ => return Err(anyhow!("unsupported proof type")),
+        };
         let proof_with_pis = CompressedProofWithPublicInputs {
-            proof: payload.shrunk_main_pod_proof,
+            proof: *plonky2_compressed_proof,
             public_inputs,
         };
         let proof = proof_with_pis

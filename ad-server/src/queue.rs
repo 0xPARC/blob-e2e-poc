@@ -4,8 +4,9 @@ use alloy::primitives::TxHash;
 use anyhow::Result;
 use app::{DEPTH, Helper};
 use common::{
-    circuits::shrink_compress_pod,
-    payload::{Payload, PayloadInit, PayloadUpdate},
+    ProofType, groth,
+    payload::{Payload, PayloadInit, PayloadProof, PayloadUpdate},
+    shrink::shrink_compress_pod,
 };
 use pod2::{
     backends::plonky2::mainpod::Prover,
@@ -193,16 +194,25 @@ async fn handle_update(ctx: Arc<Context>, req_id: Uuid, id: i64, data: Value) ->
     pod.pod.verify().unwrap();
 
     set_state(StateUpdate::ShrinkingMainPod).await;
-    let compressed_proof = {
-        let ctx = ctx.clone();
-        task::spawn_blocking(move || shrink_compress_pod(&ctx.shrunk_main_pod_build, pod).unwrap())
-            .await?
+    let compressed_proof = match ctx.cfg.proof_type {
+        ProofType::Plonky2 => {
+            let ctx = ctx.clone();
+            let compressed_proof = task::spawn_blocking(move || {
+                shrink_compress_pod(&ctx.shrunk_main_pod_build, pod).unwrap()
+            })
+            .await?;
+            PayloadProof::Plonky2(Box::new(compressed_proof))
+        }
+        ProofType::Groth16 => {
+            let compressed_proof = task::spawn_blocking(move || groth::prove(pod).unwrap()).await?;
+            PayloadProof::Groth16(compressed_proof)
+        }
     };
     println!("[TIME] ins_set pod {:?}", start.elapsed());
 
     let payload_bytes = Payload::Update(PayloadUpdate {
         id: Hash::from(RawValue::from(id)), // TODO hash
-        shrunk_main_pod_proof: compressed_proof,
+        proof: compressed_proof,
         new_state: new_state.commitment().into(),
     })
     .to_bytes();

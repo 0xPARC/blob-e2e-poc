@@ -4,7 +4,10 @@ use std::{collections::HashMap, str::FromStr, sync::Arc};
 use alloy::primitives::Address;
 use anyhow::{Context as _, Result};
 use app::{Predicates, build_predicates};
-use common::circuits::{ShrunkMainPodBuild, ShrunkMainPodSetup};
+use common::{
+    ProofType,
+    shrink::{ShrunkMainPodBuild, ShrunkMainPodSetup},
+};
 use pod2::{
     backends::plonky2::basetypes::DEFAULT_VD_SET,
     middleware::{Params, VDSet},
@@ -39,6 +42,9 @@ pub struct Config {
     // The address that receives AD update via blobs
     pub to_addr: Address,
     pub tx_watch_timeout: u64,
+    // set the proving system used to generate the proofs being sent to ethereum
+    //   options: plonky2 / groth16
+    pub proof_type: ProofType,
 }
 
 impl Config {
@@ -52,6 +58,7 @@ impl Config {
             priv_key: var("PRIV_KEY")?,
             to_addr: Address::from_str(&var("TO_ADDR")?)?,
             tx_watch_timeout: u64::from_str(&var("TX_WATCH_TIMEOUT")?)?,
+            proof_type: ProofType::from_str(&var("PROOF_TYPE")?)?,
         })
     }
 }
