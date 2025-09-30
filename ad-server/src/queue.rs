@@ -1,6 +1,6 @@
 use std::{collections::HashSet, sync::Arc};
 
-use alloy::primitives::FixedBytes;
+use alloy::primitives::TxHash;
 use anyhow::Result;
 use app::{DEPTH, Helper};
 use common::{
@@ -29,7 +29,7 @@ pub enum State {
 pub enum StateInit {
     Pending,
     SendingBlobTx,
-    Complete { id: i64, tx_hash: FixedBytes<32> },
+    Complete { id: i64, tx_hash: TxHash },
     Error(String),
 }
 
@@ -39,7 +39,7 @@ pub enum StateUpdate {
     ProvingMainPod,
     ShrinkingMainPod,
     SendingBlobTx,
-    Complete { tx_hash: FixedBytes<32> },
+    Complete { tx_hash: TxHash },
     Error(String),
 }
 
