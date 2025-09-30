@@ -15,7 +15,7 @@ use alloy::{
     eips as alloy_eips,
     eips::eip4844::kzg_to_versioned_hash,
     network as alloy_network,
-    primitives::{Address, FixedBytes},
+    primitives::{Address, B256},
     providers as alloy_provider,
 };
 use alloy_network::Ethereum;
@@ -55,8 +55,6 @@ use tracing::{debug, info, trace};
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
 pub mod endpoints;
-
-type B256 = [u8; 32];
 
 pub fn cache_get_shrunk_main_pod_circuit_data(
     params: &Params,
@@ -130,7 +128,7 @@ pub mod tables {
     };
     use pod2::middleware::{CustomPredicateRef, Hash, RawValue};
 
-    use super::B256;
+    pub type B256Sql = [u8; 32];
 
     #[derive(Debug, Eq, PartialEq)]
     pub struct HashSql(pub Hash);
@@ -198,7 +196,7 @@ pub mod tables {
         #[sqlx(try_from = "Vec<u8>")]
         pub vds_root: HashSql,
         #[sqlx(try_from = "Vec<u8>")]
-        pub blob_versioned_hash: B256,
+        pub blob_versioned_hash: B256Sql,
     }
 
     #[derive(Debug, PartialEq, Eq, sqlx::FromRow)]
@@ -209,13 +207,13 @@ pub mod tables {
         #[sqlx(try_from = "Vec<u8>")]
         pub state: RawValueSql,
         #[sqlx(try_from = "Vec<u8>")]
-        pub blob_versioned_hash: B256,
+        pub blob_versioned_hash: B256Sql,
     }
 
     #[derive(Debug, PartialEq, Eq, sqlx::FromRow)]
     pub struct Blob {
         #[sqlx(try_from = "Vec<u8>")]
-        pub versioned_hash: B256,
+        pub versioned_hash: B256Sql,
         pub slot: i64,
         pub block: i64,
         pub blob_index: i64,
@@ -505,7 +503,7 @@ impl Node {
         slot_dir
     }
 
-    async fn load_blobs_disk(&self, slot: u32) -> Result<HashMap<FixedBytes<32>, Blob>> {
+    async fn load_blobs_disk(&self, slot: u32) -> Result<HashMap<B256, Blob>> {
         let slot_dir = self.slot_dir(slot);
         let rd = match read_dir(&slot_dir) {
             Err(e) => {
@@ -526,7 +524,6 @@ impl Node {
             if file_name.starts_with("blob-") && file_name.ends_with(".cbor") {
                 let file_path = slot_dir.join(file_name);
                 let mut file = File::open(&file_path)?;
-                dbg!(&file_path);
                 let mut data_cbor = Vec::new();
                 file.read_to_end(&mut data_cbor)?;
                 let blob: Blob = minicbor_serde::from_slice(&data_cbor)?;
@@ -537,11 +534,7 @@ impl Node {
         Ok(blobs)
     }
 
-    async fn store_blobs_disk(
-        &self,
-        slot: u32,
-        blobs: &HashMap<FixedBytes<32>, Blob>,
-    ) -> Result<()> {
+    async fn store_blobs_disk(&self, slot: u32, blobs: &HashMap<B256, Blob>) -> Result<()> {
         let slot_dir = self.slot_dir(slot);
         debug!("storing blobs of slot {} to {:?}", slot, slot_dir);
         create_dir_all(&slot_dir)?;
@@ -559,10 +552,7 @@ impl Node {
 
     // Checks that the blobs contain all the blobs identified by `versioned_hashes`.  If some are
     // missing, return the versioned_hash of the first missing one.
-    fn validate_blobs(
-        blobs: &HashMap<FixedBytes<32>, Blob>,
-        versioned_hashes: &[FixedBytes<32>],
-    ) -> Option<FixedBytes<32>> {
+    fn validate_blobs(blobs: &HashMap<B256, Blob>, versioned_hashes: &[B256]) -> Option<B256> {
         for vh in versioned_hashes.iter() {
             if !blobs.contains_key(vh) {
                 return Some(*vh);
@@ -571,11 +561,7 @@ impl Node {
         None
     }
 
-    async fn get_blobs(
-        &self,
-        slot: u32,
-        versioned_hashes: &[FixedBytes<32>],
-    ) -> Result<HashMap<FixedBytes<32>, Blob>> {
+    async fn get_blobs(&self, slot: u32, versioned_hashes: &[B256]) -> Result<HashMap<B256, Blob>> {
         let blobs = self.load_blobs_disk(slot).await?;
         if Self::validate_blobs(&blobs, versioned_hashes).is_some() {
             let blobs = self.beacon_cli.get_blobs(slot.into()).await?;
@@ -676,7 +662,7 @@ impl Node {
             return Ok(None);
         }
 
-        let txs_blobs_vhs: Vec<FixedBytes<32>> = indexed_ad_blob_txs
+        let txs_blobs_vhs: Vec<B256> = indexed_ad_blob_txs
             .iter()
             .flat_map(|(_, tx)| {
                 tx.as_recovered()
