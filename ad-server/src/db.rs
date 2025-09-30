@@ -1,5 +1,5 @@
 pub use common::db_connection;
-use pod2::middleware::{Value, containers};
+use pod2::middleware::containers;
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, SqlitePool};
 
@@ -11,7 +11,7 @@ pub struct Set {
     // maybe store also: pod, proof, etc
 }
 
-// TODO
+// TODO: Use better serialisation.
 #[derive(Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct SetContainerSql(pub containers::Set);
 
@@ -76,27 +76,4 @@ pub async fn update_set(
         .execute(pool)
         .await?;
     Ok(())
-}
-
-// TODO
-pub async fn set_insert(pool: &SqlitePool, id: i64, data: Value) -> Result<Set, sqlx::Error> {
-    let old_set = get_set(pool, id).await?;
-    let mut new_set = old_set.set_container.0.clone();
-
-    // TODO
-    new_set
-        .insert(&data)
-        .expect("Set should be able to acommodate new entry.");
-
-    let new_set = SetContainerSql(new_set);
-    sqlx::query_as::<_, Set>("UPDATE sets SET set_container = ? WHERE id = ?")
-        .bind(new_set.to_bytes())
-        .bind(id)
-        .fetch_one(pool)
-        .await?;
-
-    Ok(Set {
-        id,
-        set_container: new_set,
-    })
 }

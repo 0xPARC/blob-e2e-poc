@@ -180,7 +180,6 @@ mod tests {
             queue::handle_loop(ctx.clone(), queue_rx).await;
         });
 
-        sleep(Duration::from_millis(500)).await;
         // create new set
         let res = warp::test::request()
             .method("POST")
