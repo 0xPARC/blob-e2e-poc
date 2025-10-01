@@ -1,6 +1,4 @@
 #![allow(clippy::uninlined_format_args)]
-//! Run in real mode: `cargo run --release app`
-//! Run in mock mode: `cargo run --release app -- --mock`
 
 use std::collections::HashSet;
 
@@ -261,12 +259,10 @@ impl<'a> Helper<'a> {
 #[cfg(test)]
 mod tests {
     use pod2::{
-        backends::plonky2::{
-            basetypes::DEFAULT_VD_SET, mainpod::Prover, mock::mainpod::MockProver,
-        },
+        backends::plonky2::mock::mainpod::MockProver,
         frontend::MainPodBuilder,
         lang::PrettyPrint,
-        middleware::{MainPodProver, Params, VDSet, containers::Set},
+        middleware::{MainPodProver, Params, VDSet},
     };
 
     use super::*;
