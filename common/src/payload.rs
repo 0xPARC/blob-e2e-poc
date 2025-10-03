@@ -185,10 +185,10 @@ impl PayloadProof {
             }
             ProofType::Groth16 => {
                 // get the length
-                let len_bytes: [u8; 8] = bytes[1..9].try_into()?;
+                let len_bytes: [u8; 8] = bytes[0..8].try_into()?;
                 let len: usize = u64::from_le_bytes(len_bytes) as usize;
                 // return the rest of bytes of the Groth16 proof
-                (PayloadProof::Groth16(bytes[9..9 + len].to_vec()), len)
+                (PayloadProof::Groth16(bytes[8..8 + len].to_vec()), len)
             }
         };
 

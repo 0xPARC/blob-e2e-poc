@@ -14,12 +14,13 @@ sed -i "s/^AD_GENESIS_SLOT=.*/AD_GENESIS_SLOT=\"$LAST_SLOT\"/" .env
 echo -e "removing old db"
 DB1_PATH=$(sed -n 's/^AD_SERVER_SQLITE_PATH="\([^"]*\)"/\1/p' .env)
 DB2_PATH=$(sed -n 's/^SYNCHRONIZER_SQLITE_PATH="\([^"]*\)"/\1/p' .env)
-rm $DB1_PATH
-rm $DB2_PATH
+rm -f $DB1_PATH
+rm -f $DB2_PATH
 
 echo -e "build go binary"
 git clone https://github.com/0xPARC/pod2-onchain.git tmp/pod2-onchain
 cd tmp/pod2-onchain
+git checkout fix-private-witness # TODO rm once branch merged (TMP)
 go build
 mv ./pod2-onchain ../../pod2-onchain
 cd -
@@ -46,7 +47,7 @@ $tmux split-window -v
 $tmux select-layout even-vertical
 
 # run the AnchoredDatasystem server
-$tmux send-keys -t fullflow:0.0 'RUST_LOG=ad_server=debug cargo run --release -p ad-server' C-m
+$tmux send-keys -t fullflow:0.0 'cd ad-server && RUST_LOG=ad_server=debug cargo run --release -p ad-server' C-m
 
 # run the Synchronizer server
 $tmux send-keys -t fullflow:0.1 'RUST_LOG=synchronizer=debug cargo run --release -p synchronizer' C-m
