@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use app::Index;
 use common::CustomError;
 use pod2::middleware::Value;
 use serde::{Deserialize, Serialize};
@@ -22,24 +23,24 @@ pub async fn handler_get_request(
     Ok(warp::reply::json(&state))
 }
 
-// GET /set/{id}
-pub async fn handler_get_set(
+// GET /dict/{id}
+pub async fn handler_get_dict(
     id: i64,
     ctx: Arc<Context>,
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    let set = db::get_set(&ctx.db_pool, id)
+    let dict = db::get_dict(&ctx.db_pool, id)
         .await
         .map_err(|e| CustomError(e.to_string()))?;
-    Ok(warp::reply::json(&set))
+    Ok(warp::reply::json(&dict))
 }
 
-// POST /set
+// POST /dict
 #[derive(Serialize, Deserialize)]
 pub struct QueueResp {
     req_id: Uuid,
 }
 
-pub async fn handler_new_set(ctx: Arc<Context>) -> Result<impl warp::Reply, warp::Rejection> {
+pub async fn handler_new_dict(ctx: Arc<Context>) -> Result<impl warp::Reply, warp::Rejection> {
     let req_id = Uuid::now_v7();
     ctx.queue_state
         .write()
@@ -52,10 +53,11 @@ pub async fn handler_new_set(ctx: Arc<Context>) -> Result<impl warp::Reply, warp
     Ok(warp::reply::json(&QueueResp { req_id }))
 }
 
-// POST /set/{id}
-pub async fn handler_set_ins(
+// PUT /dict/{id}/{idx}
+pub async fn handler_dict_ins(
     id: i64,
-    data: Value, // data to insert
+    idx: Index,
+    user: Value, // user to insert
     ctx: Arc<Context>,
 ) -> Result<impl warp::Reply, warp::Rejection> {
     let req_id = Uuid::now_v7();
@@ -64,7 +66,61 @@ pub async fn handler_set_ins(
         .await
         .insert(req_id, queue::State::Update(queue::StateUpdate::Pending));
     ctx.queue_tx
-        .send(queue::Request::Update { req_id, id, data })
+        .send(queue::Request::Update {
+            req_id,
+            update: queue::Update::Insert,
+            id,
+            idx,
+            data: user,
+        })
+        .await
+        .map_err(|e| CustomError(e.to_string()))?;
+    Ok(warp::reply::json(&QueueResp { req_id }))
+}
+
+// DELETE /dict/{id}/{idx}
+pub async fn handler_dict_del(
+    id: i64,
+    idx: Index,
+    user: Value, // user to insert
+    ctx: Arc<Context>,
+) -> Result<impl warp::Reply, warp::Rejection> {
+    let req_id = Uuid::now_v7();
+    ctx.queue_state
+        .write()
+        .await
+        .insert(req_id, queue::State::Update(queue::StateUpdate::Pending));
+    ctx.queue_tx
+        .send(queue::Request::Update {
+            req_id,
+            update: queue::Update::Delete,
+            id,
+            idx,
+            data: user,
+        })
+        .await
+        .map_err(|e| CustomError(e.to_string()))?;
+    Ok(warp::reply::json(&QueueResp { req_id }))
+}
+
+// GET /user/{id}/{user}
+// TODO: Maybe allow types other than strings?
+pub async fn handler_user_get(
+    id: i64,
+    user: String, // user to insert
+    ctx: Arc<Context>,
+) -> Result<impl warp::Reply, warp::Rejection> {
+    let req_id = Uuid::now_v7();
+    ctx.queue_state
+        .write()
+        .await
+        .insert(req_id, queue::State::Query(queue::StateQuery::Pending));
+    ctx.queue_tx
+        .send(queue::Request::Query {
+            req_id,
+            id,
+            data: Value::from(user),
+        })
         .await
         .map_err(|e| CustomError(e.to_string()))?;
     Ok(warp::reply::json(&QueueResp { req_id }))
@@ -76,10 +132,12 @@ pub async fn handler_set_ins(
 pub fn routes(
     ctx: Arc<Context>,
 ) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
-    get_set(ctx.clone())
+    get_dict(ctx.clone())
         .or(get_request(ctx.clone()))
-        .or(new_set(ctx.clone()))
-        .or(set_insert(ctx.clone()))
+        .or(new_dict(ctx.clone()))
+        .or(dict_insert(ctx.clone()))
+        .or(dict_delete(ctx.clone()))
+        .or(user_get(ctx.clone()))
 }
 fn get_request(
     ctx: Arc<Context>,
@@ -89,31 +147,51 @@ fn get_request(
         .and(with_ctx(ctx))
         .and_then(handler_get_request)
 }
-fn get_set(
+fn get_dict(
     ctx: Arc<Context>,
 ) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
-    warp::path!("set" / i64)
+    warp::path!("dict" / i64)
         .and(warp::get())
         .and(with_ctx(ctx))
-        .and_then(handler_get_set)
+        .and_then(handler_get_dict)
 }
-fn new_set(
+fn new_dict(
     ctx: Arc<Context>,
 ) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
-    warp::path!("set")
+    warp::path!("dict")
         .and(warp::post())
         .and(with_ctx(ctx))
-        .and_then(handler_new_set)
+        .and_then(handler_new_dict)
 }
-fn set_insert(
+fn dict_insert(
     ctx: Arc<Context>,
 ) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
-    warp::path!("set" / i64)
-        .and(warp::post())
+    warp::path!("dict" / i64 / Index)
+        .and(warp::put())
         .and(warp::body::content_length_limit(1024 * 16)) // max 16kb
         .and(warp::body::json())
         .and(with_ctx(ctx))
-        .and_then(handler_set_ins)
+        .and_then(handler_dict_ins)
+}
+
+fn dict_delete(
+    ctx: Arc<Context>,
+) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
+    warp::path!("dict" / i64 / Index)
+        .and(warp::delete())
+        .and(warp::body::content_length_limit(1024 * 16)) // max 16kb
+        .and(warp::body::json())
+        .and(with_ctx(ctx))
+        .and_then(handler_dict_del)
+}
+
+fn user_get(
+    ctx: Arc<Context>,
+) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
+    warp::path!("user" / i64 / String)
+        .and(warp::get())
+        .and(with_ctx(ctx))
+        .and_then(handler_user_get)
 }
 
 fn with_ctx(
@@ -138,7 +216,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_post_pod_success() -> anyhow::Result<()> {
-        println!("!!!{}", serde_json::to_string(&Value::from(5)).unwrap());
         common::load_dotenv()?;
         let mut cfg = Config::from_env()?;
         cfg.priv_key = "".to_string();
@@ -180,10 +257,10 @@ mod tests {
             queue::handle_loop(ctx.clone(), queue_rx).await;
         });
 
-        // create new set
+        // create new dict
         let res = warp::test::request()
             .method("POST")
-            .path("/set")
+            .path("/dict")
             .reply(&api)
             .await;
         assert_eq!(res.status(), StatusCode::OK);
@@ -202,7 +279,7 @@ mod tests {
             match resp {
                 queue::State::Init(state_init) => match state_init {
                     queue::StateInit::Complete { id, tx_hash } => {
-                        assert_eq!(id, 1); // set's id always starts at 1
+                        assert_eq!(id, 1); // dict's id always starts at 1
                         assert_eq!(
                             tx_hash.to_string(),
                             "0x0000000000000000000000000000000000000000000000000000000000000000"
@@ -216,11 +293,76 @@ mod tests {
             }
         }
 
-        // augment the set
+        // augment the dict
         let res = warp::test::request()
-            .method("POST")
-            .path("/set/1")
-            .json(&Value::from(3)) // insert 3
+            .method("PUT")
+            .path("/dict/1/red")
+            .json(&Value::from("alice")) // insert "alice" into "red" group
+            .reply(&api)
+            .await;
+        assert_eq!(res.status(), StatusCode::OK);
+
+        let resp: QueueResp = serde_json::from_slice(res.body()).expect("");
+        loop {
+            let res = warp::test::request()
+                .method("GET")
+                .path(&format!("/request/{}", resp.req_id))
+                .reply(&api)
+                .await;
+            assert_eq!(res.status(), StatusCode::OK);
+            let resp: queue::State = serde_json::from_slice(res.body()).expect("");
+            match resp {
+                queue::State::Update(state_update) => match state_update {
+                    queue::StateUpdate::Complete { tx_hash } => {
+                        // should contain the mocked tx hash
+                        assert_eq!(
+                            tx_hash.to_string(),
+                            "0x0000000000000000000000000000000000000000000000000000000000000000"
+                        ); // mock tx hash
+                        break;
+                    }
+                    queue::StateUpdate::Error(e) => panic!("StateUpdate::Error: {}", e),
+                    _ => sleep(Duration::from_millis(100)).await,
+                },
+                state => panic!("{:?} != StateUpdate::Complete", state),
+            }
+        }
+
+        // Query Alice's membership.
+        let res = warp::test::request()
+            .method("GET")
+            .path("/user/1/alice") // Query Alice's membership in the groups of dict 1
+            .reply(&api)
+            .await;
+        assert_eq!(res.status(), StatusCode::OK);
+
+        let resp: QueueResp = serde_json::from_slice(res.body()).expect("");
+        loop {
+            let res = warp::test::request()
+                .method("GET")
+                .path(&format!("/request/{}", resp.req_id))
+                .reply(&api)
+                .await;
+            assert_eq!(res.status(), StatusCode::OK);
+            let resp: queue::State = serde_json::from_slice(res.body()).expect("");
+            match resp {
+                queue::State::Query(state_query) => match state_query {
+                    queue::StateQuery::Complete { result } => {
+                        println!("{:?}", result);
+                        break;
+                    }
+                    queue::StateQuery::Error(e) => panic!("StateQuery::Error: {}", e),
+                    _ => sleep(Duration::from_millis(100)).await,
+                },
+                state => panic!("{:?} != StateQuery::Complete", state),
+            }
+        }
+
+        // Delete Alice.
+        let res = warp::test::request()
+            .method("DELETE")
+            .path("/dict/1/red")
+            .json(&Value::from("alice")) // remove "alice" from "red" group
             .reply(&api)
             .await;
         assert_eq!(res.status(), StatusCode::OK);

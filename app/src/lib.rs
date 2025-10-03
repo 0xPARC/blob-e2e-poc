@@ -1,6 +1,6 @@
 #![allow(clippy::uninlined_format_args)]
 
-use std::collections::HashSet;
+use std::{collections::HashSet, fmt, str::FromStr};
 
 use pod2::{
     frontend::{MainPodBuilder, Operation},
@@ -10,6 +10,7 @@ use pod2::{
         containers::{Dictionary, Set},
     },
 };
+use serde::{Deserialize, Serialize};
 
 pub const DEPTH: usize = 32;
 
@@ -31,14 +32,76 @@ pub struct Predicates {
     pub update: CustomPredicateRef,
 }
 
+#[derive(PartialEq, Eq, Hash, Debug, Copy, Clone, Serialize, Deserialize)]
+pub enum Index {
+    Red = 0,
+    Green,
+    Blue,
+}
+
+impl Index {
+    pub fn iterator() -> impl Iterator<Item = Index> {
+        [Self::Red, Self::Green, Self::Blue].iter().copied()
+    }
+}
+
+impl fmt::Display for Index {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let str_rep = match self {
+            Index::Red => "red",
+            Index::Green => "green",
+            Index::Blue => "blue",
+        };
+        write!(f, "{}", str_rep)
+    }
+}
+
+impl TryFrom<&str> for Index {
+    type Error = Box<dyn std::error::Error>;
+    fn try_from(s: &str) -> Result<Self, Self::Error> {
+        match s {
+            "red" => Ok(Self::Red),
+            "green" => Ok(Self::Green),
+            "blue" => Ok(Self::Blue),
+            _ => Err(format!("Invalid index: {}", s).into()),
+        }
+    }
+}
+
+impl FromStr for Index {
+    type Err = Box<dyn std::error::Error>;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        s.try_into()
+    }
+}
+
+impl TryFrom<i64> for Index {
+    type Error = Box<dyn std::error::Error>;
+    fn try_from(i: i64) -> Result<Self, Self::Error> {
+        match i {
+            0 => Ok(Self::Red),
+            1 => Ok(Self::Green),
+            2 => Ok(Self::Blue),
+            _ => Err(format!("Invalid index: {}", i).into()),
+        }
+    }
+}
+
+impl From<Index> for TypedValue {
+    fn from(val: Index) -> Self {
+        format!("{val}").into()
+    }
+}
+
 pub fn build_predicates(params: &Params) -> Predicates {
-    let input = r#"
+    let input = format!(
+        r#"
         init(new, old, op) = AND(
             // Input validation
             DictContains(op, "name", "init")
             // State transition
             Equal(old, EMPTY)
-            Equal(new, {"red": EMPTY, "green": EMPTY, "blue": EMPTY})
+            Equal(new, {{"{}": EMPTY, "{}": EMPTY, "{}": EMPTY}})
         )
 
         add(new, old, op, private: old_group, new_group) = AND(
@@ -64,7 +127,11 @@ pub fn build_predicates(params: &Params) -> Predicates {
             add(new, old, op)
             del(new, old, op)
         )
-    "#;
+    "#,
+        Index::Red,
+        Index::Green,
+        Index::Blue
+    );
     let input = input.replace("EMPTY", &format!("Raw({:#})", EMPTY_VALUE));
     println!("{}", input);
 
@@ -265,7 +332,7 @@ mod tests {
         middleware::{MainPodProver, Params, VDSet},
     };
 
-    use super::*;
+    use super::{Index::*, *};
 
     fn update(
         params: &Params,
@@ -309,10 +376,10 @@ mod tests {
 
         for op in [
             dict!({"name" => "init"}),
-            dict!({"name" => "add", "group" => "red", "user" => "alice"}),
-            dict!({"name" => "add", "group" => "blue", "user" => "bob"}),
-            dict!({"name" => "add", "group" => "red", "user" => "carol"}),
-            dict!({"name" => "del", "group" => "red", "user" => "alice"}),
+            dict!({"name" => "add", "group" => Red, "user" => "alice"}),
+            dict!({"name" => "add", "group" => Blue, "user" => "bob"}),
+            dict!({"name" => "add", "group" => Red, "user" => "carol"}),
+            dict!({"name" => "del", "group" => Red, "user" => "alice"}),
         ] {
             state = update(&params, &vd_set, prover, &predicates, state, op);
         }

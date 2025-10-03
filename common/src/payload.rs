@@ -180,6 +180,7 @@ impl PayloadUpdate {
 mod tests {
     use std::collections::HashSet;
 
+    use app::Index;
     use plonky2::plonk::proof::CompressedProofWithPublicInputs;
     use pod2::{
         backends::plonky2::{
@@ -188,7 +189,7 @@ mod tests {
         },
         dict,
         frontend::MainPodBuilder,
-        middleware::{Params, Statement, Value, containers},
+        middleware::{Key, Params, Statement, Value, containers},
     };
 
     use super::*;
@@ -205,9 +206,9 @@ mod tests {
         let custom_predicate_ref = CustomPredicateRef {
             batch: CustomPredicateBatch::new_opaque(
                 "unknown".to_string(),
-                predicates.update_pred.batch.id(),
+                predicates.update.batch.id(),
             ),
-            index: predicates.update_pred.index,
+            index: predicates.update.index,
         };
         let vd_set = &*DEFAULT_VD_SET;
         let vds_root = vd_set.root();
@@ -226,10 +227,20 @@ mod tests {
         let predicates = app::build_predicates(&params);
         let mut helper = app::Helper::new(&mut builder, &predicates);
 
-        let state = containers::Set::new(params.max_depth_mt_containers, HashSet::new()).unwrap();
+        let state = containers::Dictionary::new(
+            params.max_depth_mt_containers,
+            Index::iterator()
+                .map(|i| {
+                    containers::Set::new(params.max_depth_mt_containers, HashSet::new())
+                        .map(|s| (Key::from(format!("{}", i)), Value::from(s)))
+                })
+                .collect::<Result<_, _>>()
+                .unwrap(),
+        )
+        .unwrap();
         let data = Value::from("zero");
-        let op = dict!(32, {"name" => "ins", "data" => data}).unwrap();
-        let (new_state, st_update) = helper.st_update(state.clone(), &[op]);
+        let op = dict!(32, {"name" => "add", "group" => "red", "user" => data}).unwrap();
+        let (new_state, st_update) = helper.st_update(state.clone(), op);
         println!("st: {st_update:?}");
         builder.reveal(&st_update);
 
