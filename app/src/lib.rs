@@ -62,12 +62,6 @@ pub enum Group {
     Blue,
 }
 
-impl Group {
-    pub fn iterator() -> impl Iterator<Item = Group> {
-        [Self::Red, Self::Green, Self::Blue].iter().copied()
-    }
-}
-
 impl fmt::Display for Group {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let str_rep = match self {
@@ -97,6 +91,11 @@ impl From<Group> for TypedValue {
     }
 }
 
+/// State = Dict {
+///   "red" => Set(...),
+///   "green" => Set(...),
+///   "blue" => Set(...),
+/// }
 pub fn build_predicates(params: &Params) -> Predicates {
     let input = format!(
         r#"
@@ -137,7 +136,6 @@ pub fn build_predicates(params: &Params) -> Predicates {
         Group::Blue
     );
     let input = input.replace("EMPTY", &format!("Raw({:#})", EMPTY_VALUE));
-    println!("{}", input);
 
     let batch = parse(&input, params, &[]).unwrap().custom_batch;
 
@@ -175,9 +173,10 @@ impl<'a> Helper<'a> {
             .priv_op(Operation::dict_contains(op.clone(), "name", "init"))
             .unwrap();
         // Equal(old, EMPTY)
+        let empty_dict = dict!({});
         let st1 = self
             .builder
-            .priv_op(Operation::eq(old.clone(), EMPTY_VALUE))
+            .priv_op(Operation::eq(old.clone(), empty_dict))
             .unwrap();
 
         let empty_group = Value::from(Set::new(DEPTH, HashSet::new()).unwrap());

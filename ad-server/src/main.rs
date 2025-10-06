@@ -108,6 +108,14 @@ fn log_init() {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // If a thread panics we have a bug, so we exit the entire process instead of staying in a
+    // crashed state.
+    let default_panic = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        default_panic(info);
+        std::process::exit(1);
+    }));
+
     log_init();
     common::load_dotenv()?;
     let cfg = Config::from_env()?;

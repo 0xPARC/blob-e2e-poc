@@ -9,7 +9,7 @@ use anyhow::{Result, anyhow};
 use app::{Group, Helper, Op};
 use common::{
     ProofType, groth,
-    payload::{Payload, PayloadInit, PayloadProof, PayloadUpdate},
+    payload::{Payload, PayloadCreate, PayloadProof, PayloadUpdate},
     shrink::shrink_compress_pod,
 };
 use pod2::{
@@ -28,13 +28,13 @@ use crate::{Context, db};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum State {
-    Init(StateInit),
+    Create(StateCreate),
     Update(StateUpdate),
     Query(StateQuery),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub enum StateInit {
+pub enum StateCreate {
     Pending,
     SendingBlobTx,
     Complete { id: i64, tx_hash: TxHash },
@@ -62,7 +62,7 @@ pub enum StateQuery {
 
 #[derive(Debug)]
 pub enum Request {
-    Init { req_id: Uuid },
+    Create { req_id: Uuid },
     Update { req_id: Uuid, id: i64, op: Op },
     Query { req_id: Uuid, id: i64, user: Value },
 }
@@ -81,12 +81,12 @@ pub async fn handle_loop(ctx: Arc<Context>, mut queue_rx: Receiver<Request>) {
 
 pub async fn handle_req(ctx: Arc<Context>, req: Request) -> Result<()> {
     match req {
-        Request::Init { req_id } => {
-            if let Err(err) = handle_init(ctx.clone(), req_id).await {
+        Request::Create { req_id } => {
+            if let Err(err) = handle_create(ctx.clone(), req_id).await {
                 ctx.queue_state
                     .write()
                     .await
-                    .insert(req_id, State::Init(StateInit::Error(err.to_string())));
+                    .insert(req_id, State::Create(StateCreate::Error(err.to_string())));
             }
         }
         Request::Update { req_id, id, op } => {
@@ -110,67 +110,45 @@ pub async fn handle_req(ctx: Arc<Context>, req: Request) -> Result<()> {
 }
 
 // TODO: Include proof.
-async fn handle_init(ctx: Arc<Context>, req_id: Uuid) -> Result<()> {
+async fn handle_create(ctx: Arc<Context>, req_id: Uuid) -> Result<()> {
     let set_req_state = async |req_state| {
         ctx.queue_state
             .write()
             .await
-            .insert(req_id, State::Init(req_state));
+            .insert(req_id, State::Create(req_state));
     };
 
-    let latest_membership_list = match db::get_latest_membership_list(&ctx.db_pool).await {
-        Ok(Some(membership_list)) => membership_list,
-        Ok(None) => db::MembershipList {
-            id: 0,
-            state: db::DictContainerSql(containers::Dictionary::new(
-                ctx.pod_config.params.max_depth_mt_containers,
-                Group::iterator()
-                    .map(|i| {
-                        containers::Set::new(
-                            ctx.pod_config.params.max_depth_mt_containers,
-                            HashSet::new(),
-                        )
-                        .map(|s| (Key::from(format!("{}", i)), Value::from(s)))
-                    })
-                    .collect::<Result<_, _>>()?,
-            )?),
-        },
+    let latest_membership_list_id = match db::get_latest_membership_list(&ctx.db_pool).await {
+        Ok(Some(membership_list)) => membership_list.id,
+        Ok(None) => 0,
         Err(e) => return Err(e.into()),
     };
-    let new_id = latest_membership_list.id + 1;
+    let new_id = latest_membership_list_id + 1;
 
     // Form new dictionary
     let membership_list = db::MembershipList {
         id: new_id,
         state: db::DictContainerSql(containers::Dictionary::new(
             ctx.pod_config.params.max_depth_mt_containers,
-            Group::iterator()
-                .map(|i| {
-                    containers::Set::new(
-                        ctx.pod_config.params.max_depth_mt_containers,
-                        HashSet::new(),
-                    )
-                    .map(|s| (Key::from(format!("{}", i)), Value::from(s)))
-                })
-                .collect::<Result<_, _>>()?,
+            HashMap::new(),
         )?),
     };
 
     // send the payload to ethereum
-    let payload_bytes = Payload::Init(PayloadInit {
+    let payload_bytes = Payload::Create(PayloadCreate {
         id: Hash::from(RawValue::from(new_id)), // TODO hash
         custom_predicate_ref: ctx.pod_config.predicates.update.clone(),
         vds_root: ctx.pod_config.vd_set.root(),
     })
     .to_bytes();
 
-    set_req_state(StateInit::SendingBlobTx).await;
+    set_req_state(StateCreate::SendingBlobTx).await;
     let tx_hash = crate::eth::send_payload(&ctx.cfg, payload_bytes).await?;
 
     // update db
     db::insert_membership_list(&ctx.db_pool, &membership_list).await?;
 
-    set_req_state(StateInit::Complete {
+    set_req_state(StateCreate::Complete {
         id: membership_list.id,
         tx_hash,
     })

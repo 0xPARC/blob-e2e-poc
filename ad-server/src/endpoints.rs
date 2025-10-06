@@ -12,7 +12,7 @@ use crate::{Context, db, queue};
 // HANDLERS:
 
 // GET /request/{req_id}
-pub async fn handler_get_request(
+pub async fn handler_request_get(
     req_id: Uuid,
     ctx: Arc<Context>,
 ) -> Result<impl warp::Reply, warp::Rejection> {
@@ -24,7 +24,7 @@ pub async fn handler_get_request(
 }
 
 // GET /membership_list/{id}
-pub async fn handler_get_membership_list(
+pub async fn handler_membership_list_get(
     id: i64,
     ctx: Arc<Context>,
 ) -> Result<impl warp::Reply, warp::Rejection> {
@@ -40,16 +40,16 @@ pub struct QueueResp {
 }
 
 // POST /membership_list
-pub async fn handler_new_membership_list(
+pub async fn handler_membership_list_create(
     ctx: Arc<Context>,
 ) -> Result<impl warp::Reply, warp::Rejection> {
     let req_id = Uuid::now_v7();
     ctx.queue_state
         .write()
         .await
-        .insert(req_id, queue::State::Init(queue::StateInit::Pending));
+        .insert(req_id, queue::State::Create(queue::StateCreate::Pending));
     ctx.queue_tx
-        .send(queue::Request::Init { req_id })
+        .send(queue::Request::Create { req_id })
         .await
         .map_err(|e| CustomError(e.to_string()))?;
     Ok(warp::reply::json(&QueueResp { req_id }))
@@ -102,35 +102,35 @@ pub async fn handler_user_get(
 pub fn routes(
     ctx: Arc<Context>,
 ) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
-    get_membership_list(ctx.clone())
-        .or(get_request(ctx.clone()))
-        .or(new_membership_list(ctx.clone()))
+    membership_list_get(ctx.clone())
+        .or(request_get(ctx.clone()))
+        .or(membership_list_create(ctx.clone()))
         .or(membership_list_update(ctx.clone()))
         .or(user_get(ctx.clone()))
 }
-fn get_request(
+fn request_get(
     ctx: Arc<Context>,
 ) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
     warp::path!("request" / Uuid)
         .and(warp::get())
         .and(with_ctx(ctx))
-        .and_then(handler_get_request)
+        .and_then(handler_request_get)
 }
-fn get_membership_list(
+fn membership_list_get(
     ctx: Arc<Context>,
 ) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
     warp::path!("membership_list" / i64)
         .and(warp::get())
         .and(with_ctx(ctx))
-        .and_then(handler_get_membership_list)
+        .and_then(handler_membership_list_get)
 }
-fn new_membership_list(
+fn membership_list_create(
     ctx: Arc<Context>,
 ) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
     warp::path!("membership_list")
         .and(warp::post())
         .and(with_ctx(ctx))
-        .and_then(handler_new_membership_list)
+        .and_then(handler_membership_list_create)
 }
 fn membership_list_update(
     ctx: Arc<Context>,
@@ -236,8 +236,8 @@ mod tests {
             assert_eq!(res.status(), StatusCode::OK);
             let resp: queue::State = serde_json::from_slice(res.body()).expect("");
             match resp {
-                queue::State::Init(state_init) => match state_init {
-                    queue::StateInit::Complete { id, tx_hash } => {
+                queue::State::Create(state_init) => match state_init {
+                    queue::StateCreate::Complete { id, tx_hash } => {
                         assert_eq!(id, 1); // membership_list's id always starts at 1
                         assert_eq!(
                             // mock tx hash
@@ -246,7 +246,7 @@ mod tests {
                         );
                         break;
                     }
-                    queue::StateInit::Error(e) => panic!("StateInit::Error: {}", e),
+                    queue::StateCreate::Error(e) => panic!("StateInit::Error: {}", e),
                     _ => sleep(Duration::from_millis(100)).await,
                 },
                 state => panic!("{:?} != StateInit::Complete", state),

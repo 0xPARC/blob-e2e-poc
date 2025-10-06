@@ -58,7 +58,7 @@ pub fn read_custom_predicate_ref(bytes: &mut impl Read) -> Result<CustomPredicat
 #[derive(Debug, Eq, PartialEq)]
 #[allow(clippy::large_enum_variant)]
 pub enum Payload {
-    Init(PayloadInit),
+    Create(PayloadCreate),
     Update(PayloadUpdate),
 }
 
@@ -73,7 +73,7 @@ impl Payload {
             .write_all(&PAYLOAD_MAGIC.to_le_bytes())
             .expect("vec write");
         match self {
-            Self::Init(payload) => {
+            Self::Create(payload) => {
                 buffer
                     .write_all(&PAYLOAD_TYPE_INIT.to_le_bytes())
                     .expect("vec write");
@@ -105,7 +105,7 @@ impl Payload {
             u8::from_le_bytes(buffer)
         };
         Ok(match type_ {
-            PAYLOAD_TYPE_INIT => Payload::Init(PayloadInit::from_bytes(bytes)?),
+            PAYLOAD_TYPE_INIT => Payload::Create(PayloadCreate::from_bytes(bytes)?),
             PAYLOAD_TYPE_UPDATE => Payload::Update(PayloadUpdate::from_bytes(bytes, common_data)?),
             t => return Err(anyhow!("Invalid payload type: {}", t)),
         })
@@ -113,13 +113,13 @@ impl Payload {
 }
 
 #[derive(Debug, Eq, PartialEq)]
-pub struct PayloadInit {
+pub struct PayloadCreate {
     pub id: Hash,
     pub custom_predicate_ref: CustomPredicateRef,
     pub vds_root: Hash,
 }
 
-impl PayloadInit {
+impl PayloadCreate {
     pub fn write_bytes(&self, buffer: &mut Vec<u8>) {
         write_elems(buffer, &self.id.0);
         write_custom_predicate_ref(buffer, &self.custom_predicate_ref);
@@ -262,7 +262,7 @@ mod tests {
         };
         let vd_set = &*DEFAULT_VD_SET;
         let vds_root = vd_set.root();
-        let payload_init = Payload::Init(PayloadInit {
+        let payload_init = Payload::Create(PayloadCreate {
             id,
             custom_predicate_ref: custom_predicate_ref.clone(),
             vds_root,
