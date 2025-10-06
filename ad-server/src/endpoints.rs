@@ -168,13 +168,60 @@ mod tests {
         task,
         time::{Duration, sleep},
     };
-    use warp::http::StatusCode;
+    use warp::{Rejection, Reply, http::StatusCode};
 
     use super::*;
     use crate::{Config, PodConfig};
 
+    async fn helper_membership_list_update(
+        api: &(impl Filter<Extract = impl Reply, Error = Rejection> + Clone + 'static),
+        op: Op,
+    ) {
+        let res = warp::test::request()
+            .method("POST")
+            .path("/membership_list/1")
+            .json(&op)
+            .reply(api)
+            .await;
+        assert_eq!(res.status(), StatusCode::OK);
+
+        let resp: QueueResp = serde_json::from_slice(res.body()).expect("");
+        loop {
+            let res = warp::test::request()
+                .method("GET")
+                .path(&format!("/request/{}", resp.req_id))
+                .reply(api)
+                .await;
+            assert_eq!(res.status(), StatusCode::OK);
+            let resp: queue::State = serde_json::from_slice(res.body()).expect("");
+            match resp {
+                queue::State::Update(state_update) => match state_update {
+                    queue::StateUpdate::Complete { tx_hash } => {
+                        // should contain the mocked tx hash
+                        assert_eq!(
+                            tx_hash.to_string(),
+                            "0x0000000000000000000000000000000000000000000000000000000000000000"
+                        ); // mock tx hash
+                        break;
+                    }
+                    queue::StateUpdate::Error(e) => panic!("StateUpdate::Error: {}", e),
+                    _ => sleep(Duration::from_millis(100)).await,
+                },
+                state => panic!("{:?} != StateUpdate::Complete", state),
+            }
+        }
+    }
+
     #[tokio::test]
     async fn test_post_pod_success() -> anyhow::Result<()> {
+        // Exit with error if a thread panics.  Not ideal for `cargo test` but better than hanging
+        // forever.
+        let default_panic = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            default_panic(info);
+            std::process::exit(1);
+        }));
+
         common::load_dotenv()?;
         let mut cfg = Config::from_env()?;
         cfg.priv_key = "".to_string();
@@ -253,43 +300,19 @@ mod tests {
             }
         }
 
+        // init the membership_list
+        helper_membership_list_update(&api, Op::Init).await;
+
         // augment the membership_list
-        let res = warp::test::request()
-            .method("POST")
-            .path("/membership_list/1")
-            .json(&Op::Add {
+        // insert "alice" into "red" group
+        helper_membership_list_update(
+            &api,
+            Op::Add {
                 group: Group::Red,
                 user: "alice".to_string(),
-            }) // insert "alice" into "red" group
-            .reply(&api)
-            .await;
-        assert_eq!(res.status(), StatusCode::OK);
-
-        let resp: QueueResp = serde_json::from_slice(res.body()).expect("");
-        loop {
-            let res = warp::test::request()
-                .method("GET")
-                .path(&format!("/request/{}", resp.req_id))
-                .reply(&api)
-                .await;
-            assert_eq!(res.status(), StatusCode::OK);
-            let resp: queue::State = serde_json::from_slice(res.body()).expect("");
-            match resp {
-                queue::State::Update(state_update) => match state_update {
-                    queue::StateUpdate::Complete { tx_hash } => {
-                        // should contain the mocked tx hash
-                        assert_eq!(
-                            tx_hash.to_string(),
-                            "0x0000000000000000000000000000000000000000000000000000000000000000"
-                        ); // mock tx hash
-                        break;
-                    }
-                    queue::StateUpdate::Error(e) => panic!("StateUpdate::Error: {}", e),
-                    _ => sleep(Duration::from_millis(100)).await,
-                },
-                state => panic!("{:?} != StateUpdate::Complete", state),
-            }
-        }
+            },
+        )
+        .await;
 
         // Query Alice's membership.
         let res = warp::test::request()
@@ -322,42 +345,14 @@ mod tests {
         }
 
         // Delete Alice.
-        let res = warp::test::request()
-            .method("POST")
-            .path("/membership_list/1")
-            .json(&Op::Del {
+        helper_membership_list_update(
+            &api,
+            Op::Del {
                 group: Group::Red,
                 user: "alice".to_string(),
-            }) // remove "alice" from "red" group
-            .reply(&api)
-            .await;
-        assert_eq!(res.status(), StatusCode::OK);
-
-        let resp: QueueResp = serde_json::from_slice(res.body()).expect("");
-        loop {
-            let res = warp::test::request()
-                .method("GET")
-                .path(&format!("/request/{}", resp.req_id))
-                .reply(&api)
-                .await;
-            assert_eq!(res.status(), StatusCode::OK);
-            let resp: queue::State = serde_json::from_slice(res.body()).expect("");
-            match resp {
-                queue::State::Update(state_update) => match state_update {
-                    queue::StateUpdate::Complete { tx_hash } => {
-                        // should contain the mocked tx hash
-                        assert_eq!(
-                            tx_hash.to_string(),
-                            "0x0000000000000000000000000000000000000000000000000000000000000000"
-                        ); // mock tx hash
-                        break;
-                    }
-                    queue::StateUpdate::Error(e) => panic!("StateUpdate::Error: {}", e),
-                    _ => sleep(Duration::from_millis(100)).await,
-                },
-                state => panic!("{:?} != StateUpdate::Complete", state),
-            }
-        }
+            },
+        )
+        .await;
 
         Ok(())
     }
