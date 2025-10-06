@@ -7,7 +7,7 @@ use std::{
 
 use alloy::primitives::TxHash;
 use anyhow::{Result, anyhow};
-use app::{DEPTH, Group, Helper};
+use app::{DEPTH, Group, Helper, Op};
 use common::{
     ProofType, groth,
     payload::{Payload, PayloadInit, PayloadProof, PayloadUpdate},
@@ -17,7 +17,10 @@ use pod2::{
     backends::plonky2::{mainpod::Prover, primitives::merkletree::MerkleClaimAndProof},
     dict,
     frontend::MainPodBuilder,
-    middleware::{Hash, Key, RawValue, Value, containers},
+    middleware::{
+        Hash, Key, RawValue, Value,
+        containers::{self, Dictionary},
+    },
 };
 use serde::{Deserialize, Serialize};
 use tokio::{sync::mpsc::Receiver, task};
@@ -61,37 +64,9 @@ pub enum StateQuery {
 
 #[derive(Debug)]
 pub enum Request {
-    Init {
-        req_id: Uuid,
-    },
-    Update {
-        req_id: Uuid,
-        update: Update,
-        id: i64,
-        group: Group,
-        user: Value,
-    },
-    Query {
-        req_id: Uuid,
-        id: i64,
-        user: Value,
-    },
-}
-
-#[derive(Debug)]
-pub enum Update {
-    Add,
-    Delete,
-}
-
-impl fmt::Display for Update {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let str_rep = match self {
-            Self::Add => "add",
-            Self::Delete => "del",
-        };
-        write!(f, "{}", str_rep)
-    }
+    Init { req_id: Uuid },
+    Update { req_id: Uuid, id: i64, op: Op },
+    Query { req_id: Uuid, id: i64, user: Value },
 }
 
 pub async fn handle_loop(ctx: Arc<Context>, mut queue_rx: Receiver<Request>) {
@@ -116,14 +91,8 @@ pub async fn handle_req(ctx: Arc<Context>, req: Request) -> Result<()> {
                     .insert(req_id, State::Init(StateInit::Error(err.to_string())));
             }
         }
-        Request::Update {
-            req_id,
-            update,
-            id,
-            group,
-            user,
-        } => {
-            if let Err(err) = handle_update(ctx.clone(), req_id, update, id, group, user).await {
+        Request::Update { req_id, id, op } => {
+            if let Err(err) = handle_update(ctx.clone(), req_id, id, op).await {
                 ctx.queue_state
                     .write()
                     .await
@@ -211,14 +180,7 @@ async fn handle_init(ctx: Arc<Context>, req_id: Uuid) -> Result<()> {
     Ok(())
 }
 
-async fn handle_update(
-    ctx: Arc<Context>,
-    req_id: Uuid,
-    update: Update,
-    id: i64,
-    group: Group,
-    user: Value,
-) -> Result<()> {
+async fn handle_update(ctx: Arc<Context>, req_id: Uuid, id: i64, op: Op) -> Result<()> {
     let set_req_state = async |req_state| {
         ctx.queue_state
             .write()
@@ -238,36 +200,10 @@ async fn handle_update(
     let mut builder = MainPodBuilder::new(&ctx.pod_config.params, &ctx.pod_config.vd_set);
     let mut helper = Helper::new(&mut builder, &ctx.pod_config.predicates);
 
-    let group_name = format!("{}", group);
-    let op = dict!(DEPTH, {"name" => format!("{}",update), "group" => group_name.clone(), "user" => user.clone()}).unwrap();
+    let op = Dictionary::from(op);
 
     let (new_state, st_update) = helper.st_update(state.0.clone(), op);
     builder.reveal(&st_update);
-
-    // sanity check
-    println!("set old state: {:?}", state.0);
-    println!("set new state: {:?}", new_state);
-
-    // Construct new state
-    let mut expected_new_state = state.0.clone();
-    let mut group_to_update =
-        set_from_value(expected_new_state.get(&Key::from(group_name.clone()))?)?;
-
-    match update {
-        Update::Add => group_to_update.insert(&user),
-        Update::Delete => group_to_update.delete(&user),
-    }?;
-
-    expected_new_state.update(&group_name.into(), &group_to_update.into())?;
-
-    if new_state != expected_new_state {
-        // if we're inside this if, means that the pod2 lib has done something
-        // wrong, hence, trigger a panic so that we notice it
-        panic!(
-            "new_state: {:?} != old_state ++ [user]: {:?}",
-            new_state, expected_new_state
-        );
-    }
 
     set_req_state(StateUpdate::ProvingMainPod).await;
     let prover = Prover {};

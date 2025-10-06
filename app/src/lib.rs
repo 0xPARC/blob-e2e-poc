@@ -32,6 +32,28 @@ pub struct Predicates {
     pub update: CustomPredicateRef,
 }
 
+#[derive(PartialEq, Eq, Hash, Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Op {
+    Init,
+    Add { group: Group, user: String },
+    Del { group: Group, user: String },
+}
+
+impl From<Op> for Dictionary {
+    fn from(op: Op) -> Self {
+        match op {
+            Op::Init => dict!({"name" => "init"}),
+            Op::Add { group, user } => {
+                dict!({"name" => "add", "group" => group, "user" => user})
+            }
+            Op::Del { group, user } => {
+                dict!({"name" => "del", "group" => group, "user" => user})
+            }
+        }
+    }
+}
+
 #[derive(PartialEq, Eq, Hash, Debug, Copy, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Group {
@@ -65,18 +87,6 @@ impl FromStr for Group {
             "green" => Ok(Self::Green),
             "blue" => Ok(Self::Blue),
             _ => Err(format!("Invalid index: {}", s).into()),
-        }
-    }
-}
-
-impl TryFrom<i64> for Group {
-    type Error = Box<dyn std::error::Error>;
-    fn try_from(i: i64) -> Result<Self, Self::Error> {
-        match i {
-            0 => Ok(Self::Red),
-            1 => Ok(Self::Green),
-            2 => Ok(Self::Blue),
-            _ => Err(format!("Invalid index: {}", i).into()),
         }
     }
 }
@@ -334,12 +344,12 @@ mod tests {
         prover: &dyn MainPodProver,
         predicates: &Predicates,
         state: Dictionary,
-        op: Dictionary,
+        op: Op,
     ) -> Dictionary {
         let mut builder = MainPodBuilder::new(&params, vd_set);
         let mut helper = Helper::new(&mut builder, &predicates);
 
-        let (state, st_update) = helper.st_update(state, op);
+        let (state, st_update) = helper.st_update(state, Dictionary::from(op));
         builder.reveal(&st_update);
 
         let pod = builder.prove(prover).unwrap();
@@ -369,11 +379,23 @@ mod tests {
         );
 
         for op in [
-            dict!({"name" => "init"}),
-            dict!({"name" => "add", "group" => Red, "user" => "alice"}),
-            dict!({"name" => "add", "group" => Blue, "user" => "bob"}),
-            dict!({"name" => "add", "group" => Red, "user" => "carol"}),
-            dict!({"name" => "del", "group" => Red, "user" => "alice"}),
+            Op::Init,
+            Op::Add {
+                group: Red,
+                user: "alice".to_string(),
+            },
+            Op::Add {
+                group: Blue,
+                user: "bob".to_string(),
+            },
+            Op::Add {
+                group: Red,
+                user: "carol".to_string(),
+            },
+            Op::Del {
+                group: Red,
+                user: "alice".to_string(),
+            },
         ] {
             state = update(&params, &vd_set, prover, &predicates, state, op);
         }

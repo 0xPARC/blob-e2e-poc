@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use app::Group;
+use app::Op;
 use common::CustomError;
 use pod2::middleware::Value;
 use serde::{Deserialize, Serialize};
@@ -34,12 +34,12 @@ pub async fn handler_get_membership_list(
     Ok(warp::reply::json(&membership_list))
 }
 
-// POST /membership_list
 #[derive(Serialize, Deserialize)]
 pub struct QueueResp {
     req_id: Uuid,
 }
 
+// POST /membership_list
 pub async fn handler_new_membership_list(
     ctx: Arc<Context>,
 ) -> Result<impl warp::Reply, warp::Rejection> {
@@ -55,11 +55,10 @@ pub async fn handler_new_membership_list(
     Ok(warp::reply::json(&QueueResp { req_id }))
 }
 
-// PUT /membership_list/{id}/{group}
-pub async fn handler_membership_list_ins(
+// POST /membership_list/{id}
+pub async fn handler_membership_list_update(
     id: i64,
-    group: Group,
-    user: Value, // user to insert
+    op: Op,
     ctx: Arc<Context>,
 ) -> Result<impl warp::Reply, warp::Rejection> {
     let req_id = Uuid::now_v7();
@@ -68,38 +67,7 @@ pub async fn handler_membership_list_ins(
         .await
         .insert(req_id, queue::State::Update(queue::StateUpdate::Pending));
     ctx.queue_tx
-        .send(queue::Request::Update {
-            req_id,
-            update: queue::Update::Add,
-            id,
-            group,
-            user,
-        })
-        .await
-        .map_err(|e| CustomError(e.to_string()))?;
-    Ok(warp::reply::json(&QueueResp { req_id }))
-}
-
-// DELETE /membership_list/{id}/{group}
-pub async fn handler_membership_list_del(
-    id: i64,
-    group: Group,
-    user: Value, // user to insert
-    ctx: Arc<Context>,
-) -> Result<impl warp::Reply, warp::Rejection> {
-    let req_id = Uuid::now_v7();
-    ctx.queue_state
-        .write()
-        .await
-        .insert(req_id, queue::State::Update(queue::StateUpdate::Pending));
-    ctx.queue_tx
-        .send(queue::Request::Update {
-            req_id,
-            update: queue::Update::Delete,
-            id,
-            group,
-            user,
-        })
+        .send(queue::Request::Update { req_id, id, op })
         .await
         .map_err(|e| CustomError(e.to_string()))?;
     Ok(warp::reply::json(&QueueResp { req_id }))
@@ -137,8 +105,7 @@ pub fn routes(
     get_membership_list(ctx.clone())
         .or(get_request(ctx.clone()))
         .or(new_membership_list(ctx.clone()))
-        .or(membership_list_insert(ctx.clone()))
-        .or(membership_list_delete(ctx.clone()))
+        .or(membership_list_update(ctx.clone()))
         .or(user_get(ctx.clone()))
 }
 fn get_request(
@@ -165,26 +132,15 @@ fn new_membership_list(
         .and(with_ctx(ctx))
         .and_then(handler_new_membership_list)
 }
-fn membership_list_insert(
+fn membership_list_update(
     ctx: Arc<Context>,
 ) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
-    warp::path!("membership_list" / i64 / Group)
-        .and(warp::put())
+    warp::path!("membership_list" / i64)
+        .and(warp::post())
         .and(warp::body::content_length_limit(1024 * 16)) // max 16kb
         .and(warp::body::json())
         .and(with_ctx(ctx))
-        .and_then(handler_membership_list_ins)
-}
-
-fn membership_list_delete(
-    ctx: Arc<Context>,
-) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
-    warp::path!("membership_list" / i64 / Group)
-        .and(warp::delete())
-        .and(warp::body::content_length_limit(1024 * 16)) // max 16kb
-        .and(warp::body::json())
-        .and(with_ctx(ctx))
-        .and_then(handler_membership_list_del)
+        .and_then(handler_membership_list_update)
 }
 
 fn user_get(
@@ -204,6 +160,7 @@ fn with_ctx(
 
 #[cfg(test)]
 mod tests {
+    use app::Group;
     use common::shrink::ShrunkMainPodSetup;
     use pod2::{backends::plonky2::basetypes::DEFAULT_VD_SET, middleware::Params};
     use tokio::{
@@ -298,9 +255,12 @@ mod tests {
 
         // augment the membership_list
         let res = warp::test::request()
-            .method("PUT")
-            .path("/membership_list/1/red")
-            .json(&Value::from("alice")) // insert "alice" into "red" group
+            .method("POST")
+            .path("/membership_list/1")
+            .json(&Op::Add {
+                group: Group::Red,
+                user: "alice".to_string(),
+            }) // insert "alice" into "red" group
             .reply(&api)
             .await;
         assert_eq!(res.status(), StatusCode::OK);
@@ -363,9 +323,12 @@ mod tests {
 
         // Delete Alice.
         let res = warp::test::request()
-            .method("DELETE")
-            .path("/membership_list/1/red")
-            .json(&Value::from("alice")) // remove "alice" from "red" group
+            .method("POST")
+            .path("/membership_list/1")
+            .json(&Op::Del {
+                group: Group::Red,
+                user: "alice".to_string(),
+            }) // remove "alice" from "red" group
             .reply(&api)
             .await;
         assert_eq!(res.status(), StatusCode::OK);
