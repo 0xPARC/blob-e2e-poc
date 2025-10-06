@@ -173,10 +173,9 @@ impl<'a> Helper<'a> {
             .priv_op(Operation::dict_contains(op.clone(), "name", "init"))
             .unwrap();
         // Equal(old, EMPTY)
-        let empty_dict = dict!({});
         let st1 = self
             .builder
-            .priv_op(Operation::eq(old.clone(), empty_dict))
+            .priv_op(Operation::eq(old.clone(), EMPTY_VALUE))
             .unwrap();
 
         let empty_group = Value::from(Set::new(DEPTH, HashSet::new()).unwrap());

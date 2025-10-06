@@ -1,8 +1,4 @@
-use std::{
-    collections::{HashMap, HashSet},
-    str::FromStr,
-    sync::Arc,
-};
+use std::{collections::HashMap, str::FromStr, sync::Arc};
 
 use alloy::primitives::TxHash;
 use anyhow::{Result, anyhow};
@@ -16,7 +12,7 @@ use pod2::{
     backends::plonky2::{mainpod::Prover, primitives::merkletree::MerkleClaimAndProof},
     frontend::MainPodBuilder,
     middleware::{
-        Hash, Key, RawValue, Value,
+        Hash, RawValue, Value,
         containers::{self, Dictionary},
     },
 };

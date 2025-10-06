@@ -1,6 +1,6 @@
 use alloy::{
     consensus::{SidecarBuilder, SimpleCoder},
-    eips::{eip1559::Eip1559Estimation, eip4844::DATA_GAS_PER_BLOB},
+    eips::eip4844::DATA_GAS_PER_BLOB,
     network::{TransactionBuilder, TransactionBuilder4844},
     primitives::{Address, TxHash},
     providers::{Provider, ProviderBuilder},
@@ -153,7 +153,7 @@ async fn send_tx(
         break tx_hash;
     };
     let receipt = provider.get_transaction_receipt(tx_hash).await?;
-    return Ok((receipt.expect("tx exists"), tx_hash));
+    Ok((receipt.expect("tx exists"), tx_hash))
 }
 
 #[cfg(test)]

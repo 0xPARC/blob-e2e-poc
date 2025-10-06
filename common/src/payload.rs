@@ -63,7 +63,7 @@ pub enum Payload {
 }
 
 const PAYLOAD_MAGIC: u16 = 0xad00;
-const PAYLOAD_TYPE_INIT: u8 = 1;
+const PAYLOAD_TYPE_CREATE: u8 = 1;
 const PAYLOAD_TYPE_UPDATE: u8 = 2;
 
 impl Payload {
@@ -75,7 +75,7 @@ impl Payload {
         match self {
             Self::Create(payload) => {
                 buffer
-                    .write_all(&PAYLOAD_TYPE_INIT.to_le_bytes())
+                    .write_all(&PAYLOAD_TYPE_CREATE.to_le_bytes())
                     .expect("vec write");
                 payload.write_bytes(&mut buffer);
             }
@@ -105,7 +105,7 @@ impl Payload {
             u8::from_le_bytes(buffer)
         };
         Ok(match type_ {
-            PAYLOAD_TYPE_INIT => Payload::Create(PayloadCreate::from_bytes(bytes)?),
+            PAYLOAD_TYPE_CREATE => Payload::Create(PayloadCreate::from_bytes(bytes)?),
             PAYLOAD_TYPE_UPDATE => Payload::Update(PayloadUpdate::from_bytes(bytes, common_data)?),
             t => return Err(anyhow!("Invalid payload type: {}", t)),
         })
@@ -228,18 +228,17 @@ impl PayloadUpdate {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashSet;
+    use std::collections::HashMap;
 
-    use app::Group;
+    use app::Op;
     use plonky2::plonk::proof::CompressedProofWithPublicInputs;
     use pod2::{
         backends::plonky2::{
             basetypes::DEFAULT_VD_SET,
             mainpod::{Prover, calculate_statements_hash},
         },
-        dict,
         frontend::MainPodBuilder,
-        middleware::{Key, Params, Statement, Value, containers},
+        middleware::{Params, Statement, Value, containers},
     };
 
     use super::*;
@@ -262,35 +261,25 @@ mod tests {
         };
         let vd_set = &*DEFAULT_VD_SET;
         let vds_root = vd_set.root();
-        let payload_init = Payload::Create(PayloadCreate {
+        let payload_create = Payload::Create(PayloadCreate {
             id,
             custom_predicate_ref: custom_predicate_ref.clone(),
             vds_root,
         });
 
         println!("PayloadInit roundtrip");
-        let payload_init_bytes = payload_init.to_bytes();
-        let payload_init_decoded = Payload::from_bytes(&payload_init_bytes, common_data).unwrap();
-        assert_eq!(payload_init, payload_init_decoded);
+        let payload_create_bytes = payload_create.to_bytes();
+        let payload_create_decoded =
+            Payload::from_bytes(&payload_create_bytes, common_data).unwrap();
+        assert_eq!(payload_create, payload_create_decoded);
 
         let mut builder = MainPodBuilder::new(&params, vd_set);
         let predicates = app::build_predicates(&params);
         let mut helper = app::Helper::new(&mut builder, &predicates);
 
-        let state = containers::Dictionary::new(
-            params.max_depth_mt_containers,
-            Group::iterator()
-                .map(|i| {
-                    containers::Set::new(params.max_depth_mt_containers, HashSet::new())
-                        .map(|s| (Key::from(format!("{i}")), Value::from(s)))
-                })
-                .collect::<Result<_, _>>()
-                .unwrap(),
-        )
-        .unwrap();
-        let data = Value::from("zero");
-        let op = dict!(32, {"name" => "add", "group" => "red", "user" => data}).unwrap();
-        let (new_state, st_update) = helper.st_update(state.clone(), op);
+        let state =
+            containers::Dictionary::new(params.max_depth_mt_containers, HashMap::new()).unwrap();
+        let (new_state, st_update) = helper.st_update(state.clone(), Op::Init.into());
         println!("st: {st_update:?}");
         builder.reveal(&st_update);
 
