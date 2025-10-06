@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use app::Index;
+use app::Group;
 use common::CustomError;
 use pod2::middleware::Value;
 use serde::{Deserialize, Serialize};
@@ -23,24 +23,26 @@ pub async fn handler_get_request(
     Ok(warp::reply::json(&state))
 }
 
-// GET /dict/{id}
-pub async fn handler_get_dict(
+// GET /membership_list/{id}
+pub async fn handler_get_membership_list(
     id: i64,
     ctx: Arc<Context>,
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    let dict = db::get_dict(&ctx.db_pool, id)
+    let membership_list = db::get_membership_list(&ctx.db_pool, id)
         .await
         .map_err(|e| CustomError(e.to_string()))?;
-    Ok(warp::reply::json(&dict))
+    Ok(warp::reply::json(&membership_list))
 }
 
-// POST /dict
+// POST /membership_list
 #[derive(Serialize, Deserialize)]
 pub struct QueueResp {
     req_id: Uuid,
 }
 
-pub async fn handler_new_dict(ctx: Arc<Context>) -> Result<impl warp::Reply, warp::Rejection> {
+pub async fn handler_new_membership_list(
+    ctx: Arc<Context>,
+) -> Result<impl warp::Reply, warp::Rejection> {
     let req_id = Uuid::now_v7();
     ctx.queue_state
         .write()
@@ -53,10 +55,10 @@ pub async fn handler_new_dict(ctx: Arc<Context>) -> Result<impl warp::Reply, war
     Ok(warp::reply::json(&QueueResp { req_id }))
 }
 
-// PUT /dict/{id}/{idx}
-pub async fn handler_dict_ins(
+// PUT /membership_list/{id}/{group}
+pub async fn handler_membership_list_ins(
     id: i64,
-    idx: Index,
+    group: Group,
     user: Value, // user to insert
     ctx: Arc<Context>,
 ) -> Result<impl warp::Reply, warp::Rejection> {
@@ -70,18 +72,18 @@ pub async fn handler_dict_ins(
             req_id,
             update: queue::Update::Insert,
             id,
-            idx,
-            data: user,
+            group,
+            user,
         })
         .await
         .map_err(|e| CustomError(e.to_string()))?;
     Ok(warp::reply::json(&QueueResp { req_id }))
 }
 
-// DELETE /dict/{id}/{idx}
-pub async fn handler_dict_del(
+// DELETE /membership_list/{id}/{group}
+pub async fn handler_membership_list_del(
     id: i64,
-    idx: Index,
+    group: Group,
     user: Value, // user to insert
     ctx: Arc<Context>,
 ) -> Result<impl warp::Reply, warp::Rejection> {
@@ -95,8 +97,8 @@ pub async fn handler_dict_del(
             req_id,
             update: queue::Update::Delete,
             id,
-            idx,
-            data: user,
+            group,
+            user,
         })
         .await
         .map_err(|e| CustomError(e.to_string()))?;
@@ -119,7 +121,7 @@ pub async fn handler_user_get(
         .send(queue::Request::Query {
             req_id,
             id,
-            data: Value::from(user),
+            user: Value::from(user),
         })
         .await
         .map_err(|e| CustomError(e.to_string()))?;
@@ -132,11 +134,11 @@ pub async fn handler_user_get(
 pub fn routes(
     ctx: Arc<Context>,
 ) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
-    get_dict(ctx.clone())
+    get_membership_list(ctx.clone())
         .or(get_request(ctx.clone()))
-        .or(new_dict(ctx.clone()))
-        .or(dict_insert(ctx.clone()))
-        .or(dict_delete(ctx.clone()))
+        .or(new_membership_list(ctx.clone()))
+        .or(membership_list_insert(ctx.clone()))
+        .or(membership_list_delete(ctx.clone()))
         .or(user_get(ctx.clone()))
 }
 fn get_request(
@@ -147,42 +149,42 @@ fn get_request(
         .and(with_ctx(ctx))
         .and_then(handler_get_request)
 }
-fn get_dict(
+fn get_membership_list(
     ctx: Arc<Context>,
 ) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
-    warp::path!("dict" / i64)
+    warp::path!("membership_list" / i64)
         .and(warp::get())
         .and(with_ctx(ctx))
-        .and_then(handler_get_dict)
+        .and_then(handler_get_membership_list)
 }
-fn new_dict(
+fn new_membership_list(
     ctx: Arc<Context>,
 ) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
-    warp::path!("dict")
+    warp::path!("membership_list")
         .and(warp::post())
         .and(with_ctx(ctx))
-        .and_then(handler_new_dict)
+        .and_then(handler_new_membership_list)
 }
-fn dict_insert(
+fn membership_list_insert(
     ctx: Arc<Context>,
 ) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
-    warp::path!("dict" / i64 / Index)
+    warp::path!("membership_list" / i64 / Group)
         .and(warp::put())
         .and(warp::body::content_length_limit(1024 * 16)) // max 16kb
         .and(warp::body::json())
         .and(with_ctx(ctx))
-        .and_then(handler_dict_ins)
+        .and_then(handler_membership_list_ins)
 }
 
-fn dict_delete(
+fn membership_list_delete(
     ctx: Arc<Context>,
 ) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
-    warp::path!("dict" / i64 / Index)
+    warp::path!("membership_list" / i64 / Group)
         .and(warp::delete())
         .and(warp::body::content_length_limit(1024 * 16)) // max 16kb
         .and(warp::body::json())
         .and(with_ctx(ctx))
-        .and_then(handler_dict_del)
+        .and_then(handler_membership_list_del)
 }
 
 fn user_get(
@@ -257,10 +259,10 @@ mod tests {
             queue::handle_loop(ctx.clone(), queue_rx).await;
         });
 
-        // create new dict
+        // create new membership_list
         let res = warp::test::request()
             .method("POST")
-            .path("/dict")
+            .path("/membership_list")
             .reply(&api)
             .await;
         assert_eq!(res.status(), StatusCode::OK);
@@ -279,7 +281,7 @@ mod tests {
             match resp {
                 queue::State::Init(state_init) => match state_init {
                     queue::StateInit::Complete { id, tx_hash } => {
-                        assert_eq!(id, 1); // dict's id always starts at 1
+                        assert_eq!(id, 1); // membership_list's id always starts at 1
                         assert_eq!(
                             tx_hash.to_string(),
                             "0x0000000000000000000000000000000000000000000000000000000000000000"
@@ -293,10 +295,10 @@ mod tests {
             }
         }
 
-        // augment the dict
+        // augment the membership_list
         let res = warp::test::request()
             .method("PUT")
-            .path("/dict/1/red")
+            .path("/membership_list/1/red")
             .json(&Value::from("alice")) // insert "alice" into "red" group
             .reply(&api)
             .await;
@@ -331,7 +333,7 @@ mod tests {
         // Query Alice's membership.
         let res = warp::test::request()
             .method("GET")
-            .path("/user/1/alice") // Query Alice's membership in the groups of dict 1
+            .path("/user/1/alice") // Query Alice's membership in the groups of membership_list 1
             .reply(&api)
             .await;
         assert_eq!(res.status(), StatusCode::OK);
@@ -361,7 +363,7 @@ mod tests {
         // Delete Alice.
         let res = warp::test::request()
             .method("DELETE")
-            .path("/dict/1/red")
+            .path("/membership_list/1/red")
             .json(&Value::from("alice")) // remove "alice" from "red" group
             .reply(&api)
             .await;

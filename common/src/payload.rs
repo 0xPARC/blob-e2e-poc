@@ -180,7 +180,7 @@ impl PayloadUpdate {
 mod tests {
     use std::collections::HashSet;
 
-    use app::Index;
+    use app::Group;
     use plonky2::plonk::proof::CompressedProofWithPublicInputs;
     use pod2::{
         backends::plonky2::{
@@ -229,7 +229,7 @@ mod tests {
 
         let state = containers::Dictionary::new(
             params.max_depth_mt_containers,
-            Index::iterator()
+            Group::iterator()
                 .map(|i| {
                     containers::Set::new(params.max_depth_mt_containers, HashSet::new())
                         .map(|s| (Key::from(format!("{}", i)), Value::from(s)))

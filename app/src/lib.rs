@@ -33,32 +33,33 @@ pub struct Predicates {
 }
 
 #[derive(PartialEq, Eq, Hash, Debug, Copy, Clone, Serialize, Deserialize)]
-pub enum Index {
+#[serde(rename_all = "snake_case")]
+pub enum Group {
     Red = 0,
     Green,
     Blue,
 }
 
-impl Index {
-    pub fn iterator() -> impl Iterator<Item = Index> {
+impl Group {
+    pub fn iterator() -> impl Iterator<Item = Group> {
         [Self::Red, Self::Green, Self::Blue].iter().copied()
     }
 }
 
-impl fmt::Display for Index {
+impl fmt::Display for Group {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let str_rep = match self {
-            Index::Red => "red",
-            Index::Green => "green",
-            Index::Blue => "blue",
+            Group::Red => "red",
+            Group::Green => "green",
+            Group::Blue => "blue",
         };
         write!(f, "{}", str_rep)
     }
 }
 
-impl TryFrom<&str> for Index {
-    type Error = Box<dyn std::error::Error>;
-    fn try_from(s: &str) -> Result<Self, Self::Error> {
+impl FromStr for Group {
+    type Err = Box<dyn std::error::Error>;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "red" => Ok(Self::Red),
             "green" => Ok(Self::Green),
@@ -68,14 +69,7 @@ impl TryFrom<&str> for Index {
     }
 }
 
-impl FromStr for Index {
-    type Err = Box<dyn std::error::Error>;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        s.try_into()
-    }
-}
-
-impl TryFrom<i64> for Index {
+impl TryFrom<i64> for Group {
     type Error = Box<dyn std::error::Error>;
     fn try_from(i: i64) -> Result<Self, Self::Error> {
         match i {
@@ -87,8 +81,8 @@ impl TryFrom<i64> for Index {
     }
 }
 
-impl From<Index> for TypedValue {
-    fn from(val: Index) -> Self {
+impl From<Group> for TypedValue {
+    fn from(val: Group) -> Self {
         format!("{val}").into()
     }
 }
@@ -128,9 +122,9 @@ pub fn build_predicates(params: &Params) -> Predicates {
             del(new, old, op)
         )
     "#,
-        Index::Red,
-        Index::Green,
-        Index::Blue
+        Group::Red,
+        Group::Green,
+        Group::Blue
     );
     let input = input.replace("EMPTY", &format!("Raw({:#})", EMPTY_VALUE));
     println!("{}", input);
@@ -332,7 +326,7 @@ mod tests {
         middleware::{MainPodProver, Params, VDSet},
     };
 
-    use super::{Index::*, *};
+    use super::{Group::*, *};
 
     fn update(
         params: &Params,

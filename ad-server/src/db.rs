@@ -4,10 +4,10 @@ use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, SqlitePool};
 
 #[derive(Debug, FromRow, Serialize, Deserialize)]
-pub struct Dict {
+pub struct MembershipList {
     pub id: i64, // maybe use u64 (check db compat)
     #[sqlx(try_from = "Vec<u8>")]
-    pub dict_container: DictContainerSql,
+    pub state: DictContainerSql,
     // maybe store also: pod, proof, etc
 }
 
@@ -32,9 +32,9 @@ impl DictContainerSql {
 pub async fn init_db(db_pool: &SqlitePool) -> Result<(), sqlx::Error> {
     sqlx::query(
         r#"
-        CREATE TABLE IF NOT EXISTS dicts (
+        CREATE TABLE IF NOT EXISTS membership_list (
             id INTEGER PRIMARY KEY,
-            dict_container BLOB NOT NULL
+            state BLOB NOT NULL
         )
         "#,
     )
@@ -46,35 +46,49 @@ pub async fn init_db(db_pool: &SqlitePool) -> Result<(), sqlx::Error> {
 
 // DB METHODS:
 
-pub async fn insert_dict(pool: &SqlitePool, dict: &Dict) -> Result<(), sqlx::Error> {
-    sqlx::query("INSERT INTO dicts (id, dict_container) VALUES (?, ?);")
-        .bind(dict.id)
-        .bind(dict.dict_container.to_bytes())
+pub async fn get_latest_membership_list(
+    pool: &SqlitePool,
+) -> Result<Option<MembershipList>, sqlx::Error> {
+    Ok(sqlx::query_as::<_, MembershipList>(
+        "SELECT id, state FROM membership_list ORDER BY id DESC LIMIT 1",
+    )
+    .fetch_optional(pool)
+    .await?)
+}
+
+pub async fn insert_membership_list(
+    pool: &SqlitePool,
+    membership_list: &MembershipList,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("INSERT INTO membership_list (id, state) VALUES (?, ?);")
+        .bind(membership_list.id)
+        .bind(membership_list.state.to_bytes())
         .execute(pool)
         .await?;
     Ok(())
 }
 
-pub async fn get_dict(pool: &SqlitePool, id: i64) -> Result<Dict, sqlx::Error> {
-    let (set_bytes,): (Vec<u8>,) = sqlx::query_as("SELECT dict_container FROM dicts WHERE id = ?;")
-        .bind(id)
-        .fetch_one(pool)
-        .await?;
-    let set_container = DictContainerSql::try_from(set_bytes).expect("Invalid encoding");
-
-    Ok(Dict {
-        id,
-        dict_container: set_container,
-    })
-}
-
-pub async fn update_dict(
+pub async fn get_membership_list(
     pool: &SqlitePool,
     id: i64,
-    new_dict: containers::Dictionary,
+) -> Result<MembershipList, sqlx::Error> {
+    let (state_bytes,): (Vec<u8>,) =
+        sqlx::query_as("SELECT state FROM membership_list WHERE id = ?;")
+            .bind(id)
+            .fetch_one(pool)
+            .await?;
+    let state = DictContainerSql::try_from(state_bytes).expect("Invalid encoding");
+
+    Ok(MembershipList { id, state })
+}
+
+pub async fn update_membership_list(
+    pool: &SqlitePool,
+    id: i64,
+    state: containers::Dictionary,
 ) -> Result<(), sqlx::Error> {
-    sqlx::query("UPDATE dicts SET dict_container = ? WHERE id = ?")
-        .bind(DictContainerSql(new_dict).to_bytes())
+    sqlx::query("UPDATE membership_list SET state = ? WHERE id = ?")
+        .bind(DictContainerSql(state).to_bytes())
         .bind(id)
         .execute(pool)
         .await?;
