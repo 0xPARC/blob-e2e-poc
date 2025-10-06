@@ -9,8 +9,9 @@ use alloy::primitives::TxHash;
 use anyhow::{Result, anyhow};
 use app::{DEPTH, Group, Helper};
 use common::{
-    circuits::shrink_compress_pod,
-    payload::{Payload, PayloadInit, PayloadUpdate},
+    ProofType, groth,
+    payload::{Payload, PayloadInit, PayloadProof, PayloadUpdate},
+    shrink::shrink_compress_pod,
 };
 use pod2::{
     backends::plonky2::{mainpod::Prover, primitives::merkletree::MerkleClaimAndProof},
@@ -43,7 +44,7 @@ pub enum StateInit {
 pub enum StateUpdate {
     Pending,
     ProvingMainPod,
-    ShrinkingMainPod,
+    WrappingMainPod,
     SendingBlobTx,
     Complete { tx_hash: TxHash },
     Error(String),
@@ -52,9 +53,6 @@ pub enum StateUpdate {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum StateQuery {
     Pending,
-    ProvingMainPod,
-    ShrinkingMainPod,
-    SendingBlobTx,
     Complete {
         result: HashMap<Group, MerkleClaimAndProof>,
     },
@@ -277,17 +275,26 @@ async fn handle_update(
     println!("# pod\n:{}", pod);
     pod.pod.verify().unwrap();
 
-    set_req_state(StateUpdate::ShrinkingMainPod).await;
-    let compressed_proof = {
-        let ctx = ctx.clone();
-        task::spawn_blocking(move || shrink_compress_pod(&ctx.shrunk_main_pod_build, pod).unwrap())
-            .await?
+    set_req_state(StateUpdate::WrappingMainPod).await;
+    let compressed_proof = match ctx.cfg.proof_type {
+        ProofType::Plonky2 => {
+            let ctx = ctx.clone();
+            let compressed_proof = task::spawn_blocking(move || {
+                shrink_compress_pod(&ctx.shrunk_main_pod_build, pod).unwrap()
+            })
+            .await?;
+            PayloadProof::Plonky2(Box::new(compressed_proof))
+        }
+        ProofType::Groth16 => {
+            let compressed_proof = task::spawn_blocking(move || groth::prove(pod).unwrap()).await?;
+            PayloadProof::Groth16(compressed_proof)
+        }
     };
     println!("[TIME] ins_set pod {:?}", start.elapsed());
 
     let payload_bytes = Payload::Update(PayloadUpdate {
         id: Hash::from(RawValue::from(id)), // TODO hash
-        shrunk_main_pod_proof: compressed_proof,
+        proof: compressed_proof,
         new_state: new_state.commitment().into(),
     })
     .to_bytes();

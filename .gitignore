@@ -1,3 +1,6 @@
 /target
 .env
 *.db
+tmp
+*.pprof
+pod2-onchain

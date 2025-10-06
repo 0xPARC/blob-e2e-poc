@@ -53,12 +53,13 @@ mod tests {
     // use pod2_onchain::poseidon_bn128::config::PoseidonBN128GoldilocksConfig;
     use super::*;
 
+    #[ignore]
     #[tokio::test]
     async fn test_get_blobs() -> Result<()> {
         let beacon_url = "https://ethereum-beacon-api.publicnode.com";
         let block_id = 11111111;
-        let blobs = get_blobs(beacon_url, block_id).await?;
-        println!("{:?}", blobs);
+        let _blobs = get_blobs(beacon_url, block_id).await?;
+        // println!("{:?}", _blobs); // commented out since it prints more than 10k lines
         Ok(())
     }
 

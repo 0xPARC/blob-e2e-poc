@@ -204,7 +204,7 @@ fn with_ctx(
 
 #[cfg(test)]
 mod tests {
-    use common::circuits::ShrunkMainPodSetup;
+    use common::shrink::ShrunkMainPodSetup;
     use pod2::{backends::plonky2::basetypes::DEFAULT_VD_SET, middleware::Params};
     use tokio::{
         sync::mpsc,
@@ -283,9 +283,10 @@ mod tests {
                     queue::StateInit::Complete { id, tx_hash } => {
                         assert_eq!(id, 1); // membership_list's id always starts at 1
                         assert_eq!(
+                            // mock tx hash
                             tx_hash.to_string(),
                             "0x0000000000000000000000000000000000000000000000000000000000000000"
-                        ); // mock tx hash
+                        );
                         break;
                     }
                     queue::StateInit::Error(e) => panic!("StateInit::Error: {}", e),
