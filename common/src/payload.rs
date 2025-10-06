@@ -282,7 +282,7 @@ mod tests {
             Group::iterator()
                 .map(|i| {
                     containers::Set::new(params.max_depth_mt_containers, HashSet::new())
-                        .map(|s| (Key::from(format!("{}", i)), Value::from(s)))
+                        .map(|s| (Key::from(format!("{i}")), Value::from(s)))
                 })
                 .collect::<Result<_, _>>()
                 .unwrap(),

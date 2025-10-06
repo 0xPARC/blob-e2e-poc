@@ -49,11 +49,11 @@ pub async fn init_db(db_pool: &SqlitePool) -> Result<(), sqlx::Error> {
 pub async fn get_latest_membership_list(
     pool: &SqlitePool,
 ) -> Result<Option<MembershipList>, sqlx::Error> {
-    Ok(sqlx::query_as::<_, MembershipList>(
+    sqlx::query_as::<_, MembershipList>(
         "SELECT id, state FROM membership_list ORDER BY id DESC LIMIT 1",
     )
     .fetch_optional(pool)
-    .await?)
+    .await
 }
 
 pub async fn insert_membership_list(

@@ -1,4 +1,3 @@
-use core::fmt;
 use std::{
     collections::{HashMap, HashSet},
     str::FromStr,
@@ -7,7 +6,7 @@ use std::{
 
 use alloy::primitives::TxHash;
 use anyhow::{Result, anyhow};
-use app::{DEPTH, Group, Helper, Op};
+use app::{Group, Helper, Op};
 use common::{
     ProofType, groth,
     payload::{Payload, PayloadInit, PayloadProof, PayloadUpdate},
@@ -15,7 +14,6 @@ use common::{
 };
 use pod2::{
     backends::plonky2::{mainpod::Prover, primitives::merkletree::MerkleClaimAndProof},
-    dict,
     frontend::MainPodBuilder,
     middleware::{
         Hash, Key, RawValue, Value,

@@ -346,8 +346,8 @@ mod tests {
         state: Dictionary,
         op: Op,
     ) -> Dictionary {
-        let mut builder = MainPodBuilder::new(&params, vd_set);
-        let mut helper = Helper::new(&mut builder, &predicates);
+        let mut builder = MainPodBuilder::new(params, vd_set);
+        let mut helper = Helper::new(&mut builder, predicates);
 
         let (state, st_update) = helper.st_update(state, Dictionary::from(op));
         builder.reveal(&st_update);
@@ -397,7 +397,7 @@ mod tests {
                 user: "alice".to_string(),
             },
         ] {
-            state = update(&params, &vd_set, prover, &predicates, state, op);
+            state = update(&params, vd_set, prover, &predicates, state, op);
         }
     }
 }

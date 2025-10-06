@@ -89,6 +89,7 @@ pub async fn send_payload(cfg: &Config, b: Vec<u8>) -> Result<TxHash> {
 }
 
 #[async_recursion::async_recursion]
+#[allow(clippy::too_many_arguments)]
 async fn send_tx(
     cfg: &Config,
     provider: impl alloy::providers::Provider + 'static,
