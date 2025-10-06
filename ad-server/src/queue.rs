@@ -82,14 +82,14 @@ pub enum Request {
 
 #[derive(Debug)]
 pub enum Update {
-    Insert,
+    Add,
     Delete,
 }
 
 impl fmt::Display for Update {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let str_rep = match self {
-            Self::Insert => "add",
+            Self::Add => "add",
             Self::Delete => "del",
         };
         write!(f, "{}", str_rep)
@@ -256,7 +256,7 @@ async fn handle_update(
         set_from_value(expected_new_state.get(&Key::from(group_name.clone()))?)?;
 
     match update {
-        Update::Insert => group_to_update.insert(&user),
+        Update::Add => group_to_update.insert(&user),
         Update::Delete => group_to_update.delete(&user),
     }?;
 

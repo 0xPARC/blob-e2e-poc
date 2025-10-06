@@ -70,7 +70,7 @@ pub async fn handler_membership_list_ins(
     ctx.queue_tx
         .send(queue::Request::Update {
             req_id,
-            update: queue::Update::Insert,
+            update: queue::Update::Add,
             id,
             group,
             user,
