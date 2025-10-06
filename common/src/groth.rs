@@ -119,45 +119,27 @@ mod tests {
     use anyhow::Result;
     use pod2::{
         backends::plonky2::{basetypes::DEFAULT_VD_SET, mainpod::Prover},
-        dict,
-        frontend::MainPodBuilder,
-        middleware::{Params, Value, containers::Set},
+        frontend::{MainPodBuilder, Operation},
+        middleware::{Params, containers::Set},
     };
 
     use super::*;
 
-    // returns a MainPod
+    // returns a MainPod, example adapted from pod2/examples/main_pod_points.rs
     fn compute_pod_proof() -> Result<pod2::frontend::MainPod> {
-        let params = Params::default();
-        let vd_set = &*DEFAULT_VD_SET;
-        let predicates = app::build_predicates(&params);
+        let params = Params {
+            max_input_pods: 0,
+            ..Default::default()
+        };
 
-        let state = Set::new(
-            params.max_depth_mt_containers,
-            std::collections::HashSet::new(),
-        )
-        .expect("Should be able to construct empty set.");
+        let mut builder = MainPodBuilder::new(&params, &DEFAULT_VD_SET);
+        let set_entries = ["a", "2", "3"].into_iter().map(|n| n.into()).collect();
+        let set = Set::new(10, set_entries)?;
 
-        let mut builder = MainPodBuilder::new(&params, vd_set);
-        let mut helper = app::Helper::new(&mut builder, &predicates);
-
-        let data = Value::from(33);
-        dbg!("DATA", &data);
-        let op = dict!(app::DEPTH, {"name" => "ins", "data" => data.clone()}).unwrap();
-
-        let (_new_state, st_update) = helper.st_update(state.clone(), &[op]);
-        builder.reveal(&st_update);
-
-        let mut expected_new_state = state.clone();
-        expected_new_state
-            .insert(&data)
-            .expect("Set should be able to accommodate a new entry.");
+        builder.pub_op(Operation::set_contains(set, "2"))?;
 
         let prover = Prover {};
-        let pod = builder.prove(&prover)?;
-        println!("# pod\n:{pod}");
-        pod.pod.verify().unwrap();
-
+        let pod = builder.prove(&prover).unwrap();
         Ok(pod)
     }
 
