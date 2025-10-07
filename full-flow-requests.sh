@@ -2,18 +2,29 @@
 
 echo "running full flow"
 
-echo -e "creating new set, response:"
-curl -X POST http://0.0.0.0:8000/set
+echo -e "creating new membership_list, response:"
+./client.sh --wait-complete membership_list_create
 
-echo -e "\ngetting set, response:"
-curl -X GET http://0.0.0.0:8000/set/1
+echo -e "\ngetting membership_list, response:"
+./client.sh --wait-complete membership_list_get 1
 
-echo -e "\ninserting value into set, response:"
-# The body can be any JSON-serialised POD value, e.g. "Hello world".
-curl --json '{"Int": "33"}' http://0.0.0.0:8000/set/1
+echo -e "\ninit membership_list, response:"
+./client.sh --wait-complete membership_list_update 1 '"init"'
 
-echo -e "\ngetting counter, response:"
-curl -X GET http://0.0.0.0:8000/set/1
+echo -e "\ngetting membership_list, response:"
+./client.sh --wait-complete membership_list_get 1
+
+echo -e "\nadd to membership_list, response:"
+./client.sh --wait-complete membership_list_update 1 '{"add":{"group":"blue","user":"alice"}}'
+
+echo -e "\ngetting membership_list, response:"
+./client.sh --wait-complete membership_list_get 1
+
+echo -e "\ndel from membership_list, response:"
+./client.sh --wait-complete membership_list_update 1 '{"del":{"group":"blue","user":"alice"}}'
+
+echo -e "\ngetting membership_list, response:"
+./client.sh --wait-complete membership_list_get 1
 
 echo -e "\ngetting the state from the Synchronizer server"
 curl -X GET http://0.0.0.0:8001/ad_state/0000000000000000000000000000000000000000000000000000000000000001

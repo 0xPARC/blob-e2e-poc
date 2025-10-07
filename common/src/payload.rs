@@ -58,12 +58,12 @@ pub fn read_custom_predicate_ref(bytes: &mut impl Read) -> Result<CustomPredicat
 #[derive(Debug, Eq, PartialEq)]
 #[allow(clippy::large_enum_variant)]
 pub enum Payload {
-    Init(PayloadInit),
+    Create(PayloadCreate),
     Update(PayloadUpdate),
 }
 
 const PAYLOAD_MAGIC: u16 = 0xad00;
-const PAYLOAD_TYPE_INIT: u8 = 1;
+const PAYLOAD_TYPE_CREATE: u8 = 1;
 const PAYLOAD_TYPE_UPDATE: u8 = 2;
 
 impl Payload {
@@ -73,9 +73,9 @@ impl Payload {
             .write_all(&PAYLOAD_MAGIC.to_le_bytes())
             .expect("vec write");
         match self {
-            Self::Init(payload) => {
+            Self::Create(payload) => {
                 buffer
-                    .write_all(&PAYLOAD_TYPE_INIT.to_le_bytes())
+                    .write_all(&PAYLOAD_TYPE_CREATE.to_le_bytes())
                     .expect("vec write");
                 payload.write_bytes(&mut buffer);
             }
@@ -105,7 +105,7 @@ impl Payload {
             u8::from_le_bytes(buffer)
         };
         Ok(match type_ {
-            PAYLOAD_TYPE_INIT => Payload::Init(PayloadInit::from_bytes(bytes)?),
+            PAYLOAD_TYPE_CREATE => Payload::Create(PayloadCreate::from_bytes(bytes)?),
             PAYLOAD_TYPE_UPDATE => Payload::Update(PayloadUpdate::from_bytes(bytes, common_data)?),
             t => return Err(anyhow!("Invalid payload type: {}", t)),
         })
@@ -113,13 +113,13 @@ impl Payload {
 }
 
 #[derive(Debug, Eq, PartialEq)]
-pub struct PayloadInit {
+pub struct PayloadCreate {
     pub id: Hash,
     pub custom_predicate_ref: CustomPredicateRef,
     pub vds_root: Hash,
 }
 
-impl PayloadInit {
+impl PayloadCreate {
     pub fn write_bytes(&self, buffer: &mut Vec<u8>) {
         write_elems(buffer, &self.id.0);
         write_custom_predicate_ref(buffer, &self.custom_predicate_ref);
@@ -228,15 +228,15 @@ impl PayloadUpdate {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashSet;
+    use std::collections::HashMap;
 
+    use app::Op;
     use plonky2::plonk::proof::CompressedProofWithPublicInputs;
     use pod2::{
         backends::plonky2::{
             basetypes::DEFAULT_VD_SET,
             mainpod::{Prover, calculate_statements_hash},
         },
-        dict,
         frontend::MainPodBuilder,
         middleware::{Params, Statement, Value, containers},
     };
@@ -255,31 +255,31 @@ mod tests {
         let custom_predicate_ref = CustomPredicateRef {
             batch: CustomPredicateBatch::new_opaque(
                 "unknown".to_string(),
-                predicates.update_pred.batch.id(),
+                predicates.update.batch.id(),
             ),
-            index: predicates.update_pred.index,
+            index: predicates.update.index,
         };
         let vd_set = &*DEFAULT_VD_SET;
         let vds_root = vd_set.root();
-        let payload_init = Payload::Init(PayloadInit {
+        let payload_create = Payload::Create(PayloadCreate {
             id,
             custom_predicate_ref: custom_predicate_ref.clone(),
             vds_root,
         });
 
         println!("PayloadInit roundtrip");
-        let payload_init_bytes = payload_init.to_bytes();
-        let payload_init_decoded = Payload::from_bytes(&payload_init_bytes, common_data).unwrap();
-        assert_eq!(payload_init, payload_init_decoded);
+        let payload_create_bytes = payload_create.to_bytes();
+        let payload_create_decoded =
+            Payload::from_bytes(&payload_create_bytes, common_data).unwrap();
+        assert_eq!(payload_create, payload_create_decoded);
 
         let mut builder = MainPodBuilder::new(&params, vd_set);
         let predicates = app::build_predicates(&params);
         let mut helper = app::Helper::new(&mut builder, &predicates);
 
-        let state = containers::Set::new(params.max_depth_mt_containers, HashSet::new()).unwrap();
-        let data = Value::from("zero");
-        let op = dict!(32, {"name" => "ins", "data" => data}).unwrap();
-        let (new_state, st_update) = helper.st_update(state.clone(), &[op]);
+        let state =
+            containers::Dictionary::new(params.max_depth_mt_containers, HashMap::new()).unwrap();
+        let (new_state, st_update) = helper.st_update(state.clone(), Op::Init.into());
         println!("st: {st_update:?}");
         builder.reveal(&st_update);
 

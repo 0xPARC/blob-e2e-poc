@@ -25,7 +25,7 @@ use backoff::ExponentialBackoffBuilder;
 use chrono::{DateTime, Utc};
 use common::{
     load_dotenv,
-    payload::{Payload, PayloadInit, PayloadProof, PayloadUpdate},
+    payload::{Payload, PayloadCreate, PayloadProof, PayloadUpdate},
     shrink::ShrunkMainPodSetup,
 };
 use hex::ToHex;
@@ -721,7 +721,7 @@ impl Node {
         let payload = Payload::from_bytes(&bytes, &self.common_circuit_data)?;
 
         match payload {
-            Payload::Init(payload) => self.process_payload_init(db_tx, blob, payload).await,
+            Payload::Create(payload) => self.process_payload_init(db_tx, blob, payload).await,
             Payload::Update(payload) => self.process_payload_update(db_tx, blob, payload).await,
         }
     }
@@ -730,7 +730,7 @@ impl Node {
         &self,
         db_tx: &mut sqlx::SqliteTransaction<'_>,
         blob: &Blob,
-        payload: PayloadInit,
+        payload: PayloadCreate,
     ) -> Result<()> {
         match Database(&mut **db_tx).get_ad(payload.id).await {
             Err(err) => match err.root_cause().downcast_ref::<sqlx::Error>() {
@@ -761,7 +761,10 @@ impl Node {
             blob_versioned_hash,
         };
         Database(&mut **db_tx).add_ad_update(&ad_update).await?;
-        info!(payload = "Init", ad_id = payload.id.encode_hex::<String>());
+        info!(
+            payload = "Create",
+            ad_id = payload.id.encode_hex::<String>()
+        );
         Ok(())
     }
 

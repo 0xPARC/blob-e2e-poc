@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use app::Op;
 use common::CustomError;
 use pod2::middleware::Value;
 use serde::{Deserialize, Serialize};
@@ -11,7 +12,7 @@ use crate::{Context, db, queue};
 // HANDLERS:
 
 // GET /request/{req_id}
-pub async fn handler_get_request(
+pub async fn handler_request_get(
     req_id: Uuid,
     ctx: Arc<Context>,
 ) -> Result<impl warp::Reply, warp::Rejection> {
@@ -22,40 +23,42 @@ pub async fn handler_get_request(
     Ok(warp::reply::json(&state))
 }
 
-// GET /set/{id}
-pub async fn handler_get_set(
+// GET /membership_list/{id}
+pub async fn handler_membership_list_get(
     id: i64,
     ctx: Arc<Context>,
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    let set = db::get_set(&ctx.db_pool, id)
+    let membership_list = db::get_membership_list(&ctx.db_pool, id)
         .await
         .map_err(|e| CustomError(e.to_string()))?;
-    Ok(warp::reply::json(&set))
+    Ok(warp::reply::json(&membership_list))
 }
 
-// POST /set
 #[derive(Serialize, Deserialize)]
 pub struct QueueResp {
     req_id: Uuid,
 }
 
-pub async fn handler_new_set(ctx: Arc<Context>) -> Result<impl warp::Reply, warp::Rejection> {
+// POST /membership_list
+pub async fn handler_membership_list_create(
+    ctx: Arc<Context>,
+) -> Result<impl warp::Reply, warp::Rejection> {
     let req_id = Uuid::now_v7();
     ctx.queue_state
         .write()
         .await
-        .insert(req_id, queue::State::Init(queue::StateInit::Pending));
+        .insert(req_id, queue::State::Create(queue::StateCreate::Pending));
     ctx.queue_tx
-        .send(queue::Request::Init { req_id })
+        .send(queue::Request::Create { req_id })
         .await
         .map_err(|e| CustomError(e.to_string()))?;
     Ok(warp::reply::json(&QueueResp { req_id }))
 }
 
-// POST /set/{id}
-pub async fn handler_set_ins(
+// POST /membership_list/{id}
+pub async fn handler_membership_list_update(
     id: i64,
-    data: Value, // data to insert
+    op: Op,
     ctx: Arc<Context>,
 ) -> Result<impl warp::Reply, warp::Rejection> {
     let req_id = Uuid::now_v7();
@@ -64,7 +67,30 @@ pub async fn handler_set_ins(
         .await
         .insert(req_id, queue::State::Update(queue::StateUpdate::Pending));
     ctx.queue_tx
-        .send(queue::Request::Update { req_id, id, data })
+        .send(queue::Request::Update { req_id, id, op })
+        .await
+        .map_err(|e| CustomError(e.to_string()))?;
+    Ok(warp::reply::json(&QueueResp { req_id }))
+}
+
+// GET /user/{id}/{user}
+// TODO: Maybe allow types other than strings?
+pub async fn handler_user_get(
+    id: i64,
+    user: String, // user to insert
+    ctx: Arc<Context>,
+) -> Result<impl warp::Reply, warp::Rejection> {
+    let req_id = Uuid::now_v7();
+    ctx.queue_state
+        .write()
+        .await
+        .insert(req_id, queue::State::Query(queue::StateQuery::Pending));
+    ctx.queue_tx
+        .send(queue::Request::Query {
+            req_id,
+            id,
+            user: Value::from(user),
+        })
         .await
         .map_err(|e| CustomError(e.to_string()))?;
     Ok(warp::reply::json(&QueueResp { req_id }))
@@ -76,44 +102,54 @@ pub async fn handler_set_ins(
 pub fn routes(
     ctx: Arc<Context>,
 ) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
-    get_set(ctx.clone())
-        .or(get_request(ctx.clone()))
-        .or(new_set(ctx.clone()))
-        .or(set_insert(ctx.clone()))
+    membership_list_get(ctx.clone())
+        .or(request_get(ctx.clone()))
+        .or(membership_list_create(ctx.clone()))
+        .or(membership_list_update(ctx.clone()))
+        .or(user_get(ctx.clone()))
 }
-fn get_request(
+fn request_get(
     ctx: Arc<Context>,
 ) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
     warp::path!("request" / Uuid)
         .and(warp::get())
         .and(with_ctx(ctx))
-        .and_then(handler_get_request)
+        .and_then(handler_request_get)
 }
-fn get_set(
+fn membership_list_get(
     ctx: Arc<Context>,
 ) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
-    warp::path!("set" / i64)
+    warp::path!("membership_list" / i64)
         .and(warp::get())
         .and(with_ctx(ctx))
-        .and_then(handler_get_set)
+        .and_then(handler_membership_list_get)
 }
-fn new_set(
+fn membership_list_create(
     ctx: Arc<Context>,
 ) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
-    warp::path!("set")
+    warp::path!("membership_list")
         .and(warp::post())
         .and(with_ctx(ctx))
-        .and_then(handler_new_set)
+        .and_then(handler_membership_list_create)
 }
-fn set_insert(
+fn membership_list_update(
     ctx: Arc<Context>,
 ) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
-    warp::path!("set" / i64)
+    warp::path!("membership_list" / i64)
         .and(warp::post())
         .and(warp::body::content_length_limit(1024 * 16)) // max 16kb
         .and(warp::body::json())
         .and(with_ctx(ctx))
-        .and_then(handler_set_ins)
+        .and_then(handler_membership_list_update)
+}
+
+fn user_get(
+    ctx: Arc<Context>,
+) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
+    warp::path!("user" / i64 / String)
+        .and(warp::get())
+        .and(with_ctx(ctx))
+        .and_then(handler_user_get)
 }
 
 fn with_ctx(
@@ -124,6 +160,7 @@ fn with_ctx(
 
 #[cfg(test)]
 mod tests {
+    use app::Group;
     use common::shrink::ShrunkMainPodSetup;
     use pod2::{backends::plonky2::basetypes::DEFAULT_VD_SET, middleware::Params};
     use tokio::{
@@ -131,14 +168,60 @@ mod tests {
         task,
         time::{Duration, sleep},
     };
-    use warp::http::StatusCode;
+    use warp::{Rejection, Reply, http::StatusCode};
 
     use super::*;
     use crate::{Config, PodConfig};
 
+    async fn helper_membership_list_update(
+        api: &(impl Filter<Extract = impl Reply, Error = Rejection> + Clone + 'static),
+        op: Op,
+    ) {
+        let res = warp::test::request()
+            .method("POST")
+            .path("/membership_list/1")
+            .json(&op)
+            .reply(api)
+            .await;
+        assert_eq!(res.status(), StatusCode::OK);
+
+        let resp: QueueResp = serde_json::from_slice(res.body()).expect("");
+        loop {
+            let res = warp::test::request()
+                .method("GET")
+                .path(&format!("/request/{}", resp.req_id))
+                .reply(api)
+                .await;
+            assert_eq!(res.status(), StatusCode::OK);
+            let resp: queue::State = serde_json::from_slice(res.body()).expect("");
+            match resp {
+                queue::State::Update(state_update) => match state_update {
+                    queue::StateUpdate::Complete { tx_hash } => {
+                        // should contain the mocked tx hash
+                        assert_eq!(
+                            tx_hash.to_string(),
+                            "0x0000000000000000000000000000000000000000000000000000000000000000"
+                        ); // mock tx hash
+                        break;
+                    }
+                    queue::StateUpdate::Error(e) => panic!("StateUpdate::Error: {}", e),
+                    _ => sleep(Duration::from_millis(100)).await,
+                },
+                state => panic!("{:?} != StateUpdate::Complete", state),
+            }
+        }
+    }
+
     #[tokio::test]
     async fn test_post_pod_success() -> anyhow::Result<()> {
-        println!("!!!{}", serde_json::to_string(&Value::from(5)).unwrap());
+        // Exit with error if a thread panics.  Not ideal for `cargo test` but better than hanging
+        // forever.
+        let default_panic = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            default_panic(info);
+            std::process::exit(1);
+        }));
+
         common::load_dotenv()?;
         let mut cfg = Config::from_env()?;
         cfg.priv_key = "".to_string();
@@ -180,10 +263,10 @@ mod tests {
             queue::handle_loop(ctx.clone(), queue_rx).await;
         });
 
-        // create new set
+        // create new membership_list
         let res = warp::test::request()
             .method("POST")
-            .path("/set")
+            .path("/membership_list")
             .reply(&api)
             .await;
         assert_eq!(res.status(), StatusCode::OK);
@@ -200,9 +283,9 @@ mod tests {
             assert_eq!(res.status(), StatusCode::OK);
             let resp: queue::State = serde_json::from_slice(res.body()).expect("");
             match resp {
-                queue::State::Init(state_init) => match state_init {
-                    queue::StateInit::Complete { id, tx_hash } => {
-                        assert_eq!(id, 1); // set's id always starts at 1
+                queue::State::Create(state_init) => match state_init {
+                    queue::StateCreate::Complete { id, tx_hash } => {
+                        assert_eq!(id, 1); // membership_list's id always starts at 1
                         assert_eq!(
                             // mock tx hash
                             tx_hash.to_string(),
@@ -210,18 +293,31 @@ mod tests {
                         );
                         break;
                     }
-                    queue::StateInit::Error(e) => panic!("StateInit::Error: {}", e),
+                    queue::StateCreate::Error(e) => panic!("StateInit::Error: {}", e),
                     _ => sleep(Duration::from_millis(100)).await,
                 },
                 state => panic!("{:?} != StateInit::Complete", state),
             }
         }
 
-        // augment the set
+        // init the membership_list
+        helper_membership_list_update(&api, Op::Init).await;
+
+        // augment the membership_list
+        // insert "alice" into "red" group
+        helper_membership_list_update(
+            &api,
+            Op::Add {
+                group: Group::Red,
+                user: "alice".to_string(),
+            },
+        )
+        .await;
+
+        // Query Alice's membership.
         let res = warp::test::request()
-            .method("POST")
-            .path("/set/1")
-            .json(&Value::from(3)) // insert 3
+            .method("GET")
+            .path("/user/1/alice") // Query Alice's membership in the groups of membership_list 1
             .reply(&api)
             .await;
         assert_eq!(res.status(), StatusCode::OK);
@@ -236,21 +332,27 @@ mod tests {
             assert_eq!(res.status(), StatusCode::OK);
             let resp: queue::State = serde_json::from_slice(res.body()).expect("");
             match resp {
-                queue::State::Update(state_update) => match state_update {
-                    queue::StateUpdate::Complete { tx_hash } => {
-                        // should contain the mocked tx hash
-                        assert_eq!(
-                            tx_hash.to_string(),
-                            "0x0000000000000000000000000000000000000000000000000000000000000000"
-                        ); // mock tx hash
+                queue::State::Query(state_query) => match state_query {
+                    queue::StateQuery::Complete { result } => {
+                        println!("{:?}", result);
                         break;
                     }
-                    queue::StateUpdate::Error(e) => panic!("StateUpdate::Error: {}", e),
+                    queue::StateQuery::Error(e) => panic!("StateQuery::Error: {}", e),
                     _ => sleep(Duration::from_millis(100)).await,
                 },
-                state => panic!("{:?} != StateUpdate::Complete", state),
+                state => panic!("{:?} != StateQuery::Complete", state),
             }
         }
+
+        // Delete Alice.
+        helper_membership_list_update(
+            &api,
+            Op::Del {
+                group: Group::Red,
+                user: "alice".to_string(),
+            },
+        )
+        .await;
 
         Ok(())
     }

@@ -1,18 +1,20 @@
-use std::{collections::HashSet, sync::Arc};
+use std::{collections::HashMap, str::FromStr, sync::Arc};
 
 use alloy::primitives::TxHash;
-use anyhow::Result;
-use app::{DEPTH, Helper};
+use anyhow::{Result, anyhow};
+use app::{Group, Helper, Op};
 use common::{
     ProofType, groth,
-    payload::{Payload, PayloadInit, PayloadProof, PayloadUpdate},
+    payload::{Payload, PayloadCreate, PayloadProof, PayloadUpdate},
     shrink::shrink_compress_pod,
 };
 use pod2::{
-    backends::plonky2::mainpod::Prover,
-    dict,
+    backends::plonky2::{mainpod::Prover, primitives::merkletree::MerkleClaimAndProof},
     frontend::MainPodBuilder,
-    middleware::{Hash, RawValue, Value, containers},
+    middleware::{
+        Hash, RawValue, Value,
+        containers::{self, Dictionary},
+    },
 };
 use serde::{Deserialize, Serialize};
 use tokio::{sync::mpsc::Receiver, task};
@@ -22,12 +24,13 @@ use crate::{Context, db};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum State {
-    Init(StateInit),
+    Create(StateCreate),
     Update(StateUpdate),
+    Query(StateQuery),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub enum StateInit {
+pub enum StateCreate {
     Pending,
     SendingBlobTx,
     Complete { id: i64, tx_hash: TxHash },
@@ -38,16 +41,26 @@ pub enum StateInit {
 pub enum StateUpdate {
     Pending,
     ProvingMainPod,
-    ShrinkingMainPod,
+    WrappingMainPod,
     SendingBlobTx,
     Complete { tx_hash: TxHash },
     Error(String),
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum StateQuery {
+    Pending,
+    Complete {
+        result: HashMap<Group, MerkleClaimAndProof>,
+    },
+    Error(String),
+}
+
 #[derive(Debug)]
 pub enum Request {
-    Init { req_id: Uuid },
-    Update { req_id: Uuid, id: i64, data: Value },
+    Create { req_id: Uuid },
+    Update { req_id: Uuid, id: i64, op: Op },
+    Query { req_id: Uuid, id: i64, user: Value },
 }
 
 pub async fn handle_loop(ctx: Arc<Context>, mut queue_rx: Receiver<Request>) {
@@ -64,136 +77,113 @@ pub async fn handle_loop(ctx: Arc<Context>, mut queue_rx: Receiver<Request>) {
 
 pub async fn handle_req(ctx: Arc<Context>, req: Request) -> Result<()> {
     match req {
-        Request::Init { req_id } => {
-            if let Err(err) = handle_init(ctx.clone(), req_id).await {
+        Request::Create { req_id } => {
+            if let Err(err) = handle_create(ctx.clone(), req_id).await {
                 ctx.queue_state
                     .write()
                     .await
-                    .insert(req_id, State::Init(StateInit::Error(err.to_string())));
+                    .insert(req_id, State::Create(StateCreate::Error(err.to_string())));
             }
         }
-        Request::Update { req_id, id, data } => {
-            if let Err(err) = handle_update(ctx.clone(), req_id, id, data).await {
+        Request::Update { req_id, id, op } => {
+            if let Err(err) = handle_update(ctx.clone(), req_id, id, op).await {
                 ctx.queue_state
                     .write()
                     .await
                     .insert(req_id, State::Update(StateUpdate::Error(err.to_string())));
             }
         }
+        Request::Query { req_id, id, user } => {
+            if let Err(err) = handle_query(ctx.clone(), req_id, id, user).await {
+                ctx.queue_state
+                    .write()
+                    .await
+                    .insert(req_id, State::Query(StateQuery::Error(err.to_string())));
+            }
+        }
     }
     Ok(())
 }
 
-async fn handle_init(ctx: Arc<Context>, req_id: Uuid) -> Result<()> {
-    let set_state = async |state| {
+// TODO: Include proof.
+async fn handle_create(ctx: Arc<Context>, req_id: Uuid) -> Result<()> {
+    let set_req_state = async |req_state| {
         ctx.queue_state
             .write()
             .await
-            .insert(req_id, State::Init(state));
+            .insert(req_id, State::Create(req_state));
     };
 
-    let latest_set = match sqlx::query_as::<_, db::Set>(
-        "SELECT id, set_container FROM sets ORDER BY id DESC LIMIT 1",
-    )
-    .fetch_optional(&ctx.db_pool)
-    .await
-    {
-        Ok(Some(set)) => set,
-        Ok(None) => db::Set {
-            id: 0,
-            set_container: db::SetContainerSql(
-                containers::Set::new(
-                    ctx.pod_config.params.max_depth_mt_containers,
-                    HashSet::new(),
-                )
-                .expect("Should be able to construct empty set."),
-            ),
-        },
+    let latest_membership_list_id = match db::get_latest_membership_list(&ctx.db_pool).await {
+        Ok(Some(membership_list)) => membership_list.id,
+        Ok(None) => 0,
         Err(e) => return Err(e.into()),
     };
-    let new_id = latest_set.id + 1;
+    let new_id = latest_membership_list_id + 1;
+
+    // Form new dictionary
+    let membership_list = db::MembershipList {
+        id: new_id,
+        state: db::DictContainerSql(containers::Dictionary::new(
+            ctx.pod_config.params.max_depth_mt_containers,
+            HashMap::new(),
+        )?),
+    };
 
     // send the payload to ethereum
-    let payload_bytes = Payload::Init(PayloadInit {
+    let payload_bytes = Payload::Create(PayloadCreate {
         id: Hash::from(RawValue::from(new_id)), // TODO hash
-        custom_predicate_ref: ctx.pod_config.predicates.update_pred.clone(),
+        custom_predicate_ref: ctx.pod_config.predicates.update.clone(),
         vds_root: ctx.pod_config.vd_set.root(),
     })
     .to_bytes();
 
-    set_state(StateInit::SendingBlobTx).await;
+    set_req_state(StateCreate::SendingBlobTx).await;
     let tx_hash = crate::eth::send_payload(&ctx.cfg, payload_bytes).await?;
 
     // update db
-    let set = db::Set {
-        id: new_id,
-        set_container: db::SetContainerSql(
-            containers::Set::new(
-                ctx.pod_config.params.max_depth_mt_containers,
-                HashSet::new(),
-            )
-            .expect("Should be able to construct empty set."),
-        ),
-    };
-    db::insert_set(&ctx.db_pool, &set).await?;
+    db::insert_membership_list(&ctx.db_pool, &membership_list).await?;
 
-    set_state(StateInit::Complete {
-        id: set.id,
+    set_req_state(StateCreate::Complete {
+        id: membership_list.id,
         tx_hash,
     })
     .await;
     Ok(())
 }
 
-async fn handle_update(ctx: Arc<Context>, req_id: Uuid, id: i64, data: Value) -> Result<()> {
-    let set_state = async |state| {
+async fn handle_update(ctx: Arc<Context>, req_id: Uuid, id: i64, op: Op) -> Result<()> {
+    let set_req_state = async |req_state| {
         ctx.queue_state
             .write()
             .await
-            .insert(req_id, State::Update(state));
+            .insert(req_id, State::Update(req_state));
     };
-    // TODO: Data validation
+    // TODO: User validation
 
     // get state from db
-    let set = db::get_set(&ctx.db_pool, id).await?;
+    let membership_list = db::get_membership_list(&ctx.db_pool, id).await?;
 
     // with the actual POD
-    let state = set.set_container;
+    let state = membership_list.state;
 
     let start = std::time::Instant::now();
 
     let mut builder = MainPodBuilder::new(&ctx.pod_config.params, &ctx.pod_config.vd_set);
     let mut helper = Helper::new(&mut builder, &ctx.pod_config.predicates);
 
-    let op = dict!(DEPTH, {"name" => "ins", "data" => data.clone()}).unwrap();
+    let op = Dictionary::from(op);
 
-    let (new_state, st_update) = helper.st_update(state.0.clone(), &[op]);
+    let (new_state, st_update) = helper.st_update(state.0.clone(), op);
     builder.reveal(&st_update);
 
-    // sanity check
-    println!("set old state: {:?}", state.0);
-    println!("set new state: {:?}", new_state);
-    let mut expected_new_state = state.0.clone();
-    expected_new_state
-        .insert(&data)
-        .expect("Set should be able to accommodate a new entry.");
-
-    if new_state != expected_new_state {
-        // if we're inside this if, means that the pod2 lib has done something
-        // wrong, hence, trigger a panic so that we notice it
-        panic!(
-            "new_state: {:?} != old_state ++ [data]: {:?}",
-            new_state, expected_new_state
-        );
-    }
-
-    set_state(StateUpdate::ProvingMainPod).await;
+    set_req_state(StateUpdate::ProvingMainPod).await;
     let prover = Prover {};
     let pod = task::spawn_blocking(move || builder.prove(&prover).unwrap()).await?;
     println!("# pod\n:{}", pod);
     pod.pod.verify().unwrap();
 
-    set_state(StateUpdate::ShrinkingMainPod).await;
+    set_req_state(StateUpdate::WrappingMainPod).await;
     let compressed_proof = match ctx.cfg.proof_type {
         ProofType::Plonky2 => {
             let ctx = ctx.clone();
@@ -217,11 +207,67 @@ async fn handle_update(ctx: Arc<Context>, req_id: Uuid, id: i64, data: Value) ->
     })
     .to_bytes();
 
-    set_state(StateUpdate::SendingBlobTx).await;
+    set_req_state(StateUpdate::SendingBlobTx).await;
     let tx_hash = crate::eth::send_payload(&ctx.cfg, payload_bytes).await?;
 
-    db::update_set(&ctx.db_pool, id, new_state).await?;
+    db::update_membership_list(&ctx.db_pool, id, new_state).await?;
 
-    set_state(StateUpdate::Complete { tx_hash }).await;
+    set_req_state(StateUpdate::Complete { tx_hash }).await;
     Ok(())
+}
+
+async fn handle_query(ctx: Arc<Context>, req_id: Uuid, id: i64, user: Value) -> Result<()> {
+    let set_req_state = async |req_state| {
+        ctx.queue_state
+            .write()
+            .await
+            .insert(req_id, State::Query(req_state));
+    };
+
+    // get state from db
+    let state = db::get_membership_list(&ctx.db_pool, id).await?.state.0;
+
+    let dict_kvs = state
+        .kvs()
+        .iter()
+        .map(|(group, v)| {
+            set_from_value(v).and_then(|s| {
+                Group::from_str(group.name())
+                    .map_err(|_| anyhow!("Invalid group: {}", group))
+                    .map(|group| (group, s))
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    let result = dict_kvs
+        .into_iter()
+        .filter_map(|(group, s)| {
+            s.contains(&user).then(|| {
+                s.prove(&user)
+                    .map(|proof| {
+                        (
+                            group,
+                            MerkleClaimAndProof {
+                                root: s.commitment(),
+                                key: user.raw(),
+                                value: user.raw(),
+                                proof,
+                            },
+                        )
+                    })
+                    .map_err(|e| e.into())
+            })
+        })
+        .collect::<Result<HashMap<_, _>>>()?;
+
+    set_req_state(StateQuery::Complete { result }).await;
+
+    Ok(())
+}
+
+fn set_from_value(v: &Value) -> Result<containers::Set> {
+    match v.typed() {
+        pod2::middleware::TypedValue::Set(s) => Ok(s.clone()),
+        _ => Err(anyhow!("Invalid set")),
+    }
 }
