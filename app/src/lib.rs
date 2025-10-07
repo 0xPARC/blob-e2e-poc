@@ -123,6 +123,7 @@ pub fn build_predicates(params: &Params) -> (Predicates, RevPredicates) {
         g = Group::Green,
         b = Group::Blue
     );
+
     let input_state = format!(
         r#"
         // State predicates
@@ -152,7 +153,7 @@ pub fn build_predicates(params: &Params) -> (Predicates, RevPredicates) {
             DictUpdate(new, old, op.group, new_group)
         )
 
-        update(new, old, private: op) = OR(
+        update(new, old, op) = OR(
             init(new, old, op)
             add(new, old, op)
             del(new, old, op)
@@ -162,23 +163,56 @@ pub fn build_predicates(params: &Params) -> (Predicates, RevPredicates) {
 
     let state_batch = parse(&input_state, params, &[]).unwrap().custom_batch;
 
+    /* NOTE: Wouldn't this be nice?  We commit to the sequence of ops and at the same time allow
+     * batching of updates
+    let input_state2 = format!(
+        r#"
+        use _, _, _, update from 0x{state_batch}
+
+        update_rec(new, ops, old_ops, epoch, private: old_old_ops, old_epoch) = AND(
+            update2(old, old_ops, old_old_ops, old_epoch)
+            SumOf(epoch, old_epoch, 1)
+            DictInsert(ops, old_ops, old_epoch, op)
+            update(new, old, op)
+        )
+
+        update_base(new, ops, old_ops, epoch) = AND(
+            Equal(new, {empty})
+            Equal(ops, {empty})
+            Equal(old_ops, {empty})
+            Equal(epoch, 0)
+        )
+
+        update2(new, ops, old_ops, epoch) = OR(
+            update_base(new, ops, old_ops, epoch)
+            update_rec(new, ops, old_ops, epoch)
+        )
+    "#,
+        state_batch = state_batch.id().encode_hex::<String>(),
+    );
+
+    let state2_batch = parse(&input_state, params, &[state_batch.clone()])
+        .unwrap()
+        .custom_batch;
+    */
+
     let input_rev_add = format!(
         r#"
         // Addition
-        rev_add_fresh(new, old, user, group, private: user_groups) = AND(
-            SetInsert(user_groups, {empty}, group)
-            DictInsert(new, old, user, user_groups)
+        rev_add_fresh(new, old, op, private: user_groups) = AND(
+            SetInsert(user_groups, {empty}, op.group)
+            DictInsert(new, old, op.user, user_groups)
         )
 
-        rev_add_existing(new, old, user, group, private: old_user_groups, user_groups) = AND(
-            DictContains(old, user, old_user_groups)
-            SetInsert(user_groups, old_user_groups, group)
-            DictUpdate(new, old, user, user_groups)
+        rev_add_existing(new, old, op, private: old_user_groups, user_groups) = AND(
+            DictContains(old, op.user, old_user_groups)
+            SetInsert(user_groups, old_user_groups, op.group)
+            DictUpdate(new, old, op.user, user_groups)
         )
 
-        rev_add(new, old, user, group) = OR(
-            rev_add_fresh(new, old, user, group)
-            rev_add_existing(new, old, user, group)
+        rev_add(new, old, op) = OR(
+            rev_add_fresh(new, old, op)
+            rev_add_existing(new, old, op)
         )
     "#
     );
@@ -188,21 +222,21 @@ pub fn build_predicates(params: &Params) -> (Predicates, RevPredicates) {
     let input_rev_del = format!(
         r#"
         // Deletion
-        rev_del_singleton(new, old, user, group, private: old_user_groups) = AND(
-            DictContains(old, user, old_user_groups)
-            SetDelete({empty}, old_user_groups, group)
-            DictDelete(new, old, user)
+        rev_del_singleton(new, old, op, private: old_user_groups) = AND(
+            DictContains(old, op.user, old_user_groups)
+            SetDelete({empty}, old_user_groups, op.group)
+            DictDelete(new, old, op.user)
         )
 
-        rev_del_else(new, old, user, group, private: old_user_groups, user_groups) = AND(
-            DictContains(old, user, old_user_groups)
-            SetDelete(user_groups, old_user_groups, group)
-            DictContains(new, user, user_groups)
+        rev_del_else(new, old, op, private: old_user_groups, user_groups) = AND(
+            DictContains(old, op.user, old_user_groups)
+            SetDelete(user_groups, old_user_groups, op.group)
+            DictContains(new, op.user, user_groups)
         )
 
-        rev_del(new, old, user, group) = OR(
-            rev_del_singleton(new, old, user, group)
-            rev_del_else(new, old, user, group)
+        rev_del(new, old, op) = OR(
+            rev_del_singleton(new, old, op)
+            rev_del_else(new, old, op)
         )
     "#
     );
@@ -211,36 +245,35 @@ pub fn build_predicates(params: &Params) -> (Predicates, RevPredicates) {
 
     let input_rev = format!(
         r#"
-        use init, add, del, _ from 0x{state_batch}
+        use _, _, _, update from 0x{state_batch}
         use _, _, rev_add from 0x{rev_state_add_batch}
         use _, _, rev_del from 0x{rev_state_del_batch}
 
         // Reverse index & state syncing
-        rev_sync_init(rev_state, state, private: old, op) = AND(
+        rev_sync_init(rev_state, state, old_state, op) = AND(
+            update(state, old_state, op)
+            DictContains(op, "name", "init")
             Equal(rev_state, {empty})
-            init(state, old, op)
         )
 
-        rev_sync_add(rev_state, state, private: op, old_rev_state, old_state, user, group) = AND(
+        rev_sync_add(rev_state, state, old_state, op, private: old_rev_state) = AND(
             rev_sync(old_rev_state, old_state)
-            add(state, old_state, op)
-            DictContains(op, "user", user)
-            DictContains(op, "group", group)
-            rev_add(rev_state, old_rev_state, user, group)
+            update(state, old_state, op)
+            DictContains(op, "name", "add")
+            rev_add(rev_state, old_rev_state, op)
         )
 
-        rev_sync_del(rev_state, state, private: op, old_rev_state, old_state, user, group) = AND(
+        rev_sync_del(rev_state, state, old_state, op, private: old_rev_state) = AND(
             rev_sync(old_rev_state, old_state)
-            del(state, old_state, op)
-            DictContains(op, "user", user)
-            DictContains(op, "group", group)
-            rev_del(rev_state, old_rev_state, user, group)
+            update(state, old_state, op)
+            DictContains(op, "name", "del")
+            rev_del(rev_state, old_rev_state, op)
         )
 
-        rev_sync(rev_state, state) = OR(
-            rev_sync_init(rev_state, state)
-            rev_sync_add(rev_state, state)
-            rev_sync_del(rev_state, state)
+        rev_sync(rev_state, state, private: old_state, op) = OR(
+            rev_sync_init(rev_state, state, old_state, op)
+            rev_sync_add(rev_state, state, old_state, op)
+            rev_sync_del(rev_state, state, old_state, op)
         )
         "#,
         state_batch = state_batch.id().encode_hex::<String>(),
@@ -453,74 +486,226 @@ impl<'a> Helper<'a> {
         )
     }
 
-    pub fn st_update(
-        &mut self,
-        old: Dictionary,
-        op: Dictionary,
-    ) -> (Dictionary, Statement, Statement) {
+    pub fn st_update(&mut self, old: Dictionary, op: Dictionary) -> (Dictionary, Statement) {
         let name = String::try_from(op.get(&Key::from("name")).unwrap().typed()).unwrap();
         let st_none = Statement::None;
-        let (new, sts, nontrivial_st) = match name.as_str() {
+        let (new, sts) = match name.as_str() {
             "init" => {
                 // init(new, old, op)
                 let (new, st) = self.st_init(old, op);
-                (new, [st.clone(), st_none.clone(), st_none.clone()], st)
+                (new, [st, st_none.clone(), st_none.clone()])
             }
             "add" => {
                 // add(new, old, op, private: old_group, new_group)
                 let (new, st) = self.st_add_del(old, op);
-                (new, [st_none.clone(), st.clone(), st_none.clone()], st)
+                (new, [st_none.clone(), st, st_none.clone()])
             }
             "del" => {
                 // del(new, old, op, private: old_group, new_group)
                 let (new, st) = self.st_add_del(old, op);
-                (new, [st_none.clone(), st_none.clone(), st.clone()], st)
+                (new, [st_none.clone(), st_none.clone(), st])
             }
             _ => panic!("invalid op.name = {}", name),
         };
 
         (
             new,
-            // update(new, old, private: op)
+            // update(new, old, op)
             self.builder
                 .priv_op(Operation::custom(self.predicates.update.clone(), sts))
                 .unwrap(),
-            nontrivial_st,
         )
     }
 
-    pub fn st_rev_sync_init(&mut self, state_init_st: Statement) -> (Dictionary, Statement) {
-        let st_none = Statement::None;
+    pub fn st_rev_sync_init(
+        &mut self,
+        st_update: Statement,
+        op: Dictionary,
+    ) -> (Dictionary, Statement) {
         let init_rev_state = Dictionary::new(DEPTH, HashMap::new()).unwrap();
-        let st0 = self
+        let st1 = self
             .builder
-            .priv_op(Operation::eq(init_rev_state.clone(), EMPTY_VALUE))
+            .priv_op(Operation::dict_contains(op.clone(), "name", "init"))
             .unwrap();
         let st2 = self
             .builder
-            .priv_op(Operation::custom(
-                self.rev_predicates.sync_init.clone(),
-                [st0, state_init_st.clone()],
+            .priv_op(Operation::eq(init_rev_state.clone(), EMPTY_VALUE))
+            .unwrap();
+        (
+            init_rev_state,
+            self.builder
+                .priv_op(Operation::custom(
+                    self.rev_predicates.sync_init.clone(),
+                    [st_update, st1, st2],
+                ))
+                .unwrap(),
+        )
+    }
+
+    pub fn st_rev_add_fresh(
+        &mut self,
+        old_rev: Dictionary,
+        op: Dictionary,
+        user: &Key,
+        group: &Value,
+    ) -> (Dictionary, Statement) {
+        let empty_set = Set::new(DEPTH, HashSet::new()).unwrap();
+        let mut user_groups = empty_set.clone();
+        user_groups.insert(&group).unwrap();
+        let mut new_rev = old_rev.clone();
+        new_rev
+            .insert(user, &Value::from(user_groups.clone()))
+            .unwrap();
+        let st0 = self
+            .builder
+            .priv_op(Operation::set_insert(
+                user_groups.clone(),
+                empty_set,
+                (&op, "group"),
             ))
             .unwrap();
-        (init_rev_state, st2)
+        let st1 = self
+            .builder
+            .priv_op(Operation::dict_insert(
+                new_rev.clone(),
+                old_rev,
+                (&op, "user"),
+                user_groups,
+            ))
+            .unwrap();
+        (
+            new_rev,
+            self.builder
+                .priv_op(Operation::custom(
+                    self.rev_predicates.add_fresh.clone(),
+                    [st0, st1],
+                ))
+                .unwrap(),
+        )
+    }
+
+    pub fn st_rev_add_existing(
+        &mut self,
+        old_rev: Dictionary,
+        op: Dictionary,
+        user: &Key,
+        group: &Value,
+    ) -> (Dictionary, Statement) {
+        let old_user_groups = old_rev.get(user).unwrap();
+        let mut user_groups = if let TypedValue::Set(set) = old_user_groups.typed() {
+            set.clone()
+        } else {
+            panic!("Value not a Set: {:?}", old_user_groups)
+        };
+        user_groups.insert(group).unwrap();
+        let mut new_rev = old_rev.clone();
+        new_rev
+            .update(user, &Value::from(user_groups.clone()))
+            .unwrap();
+
+        let st0 = self
+            .builder
+            .priv_op(Operation::dict_contains(
+                old_rev.clone(),
+                (&op, "user"),
+                old_user_groups.clone(),
+            ))
+            .unwrap();
+        let st1 = self
+            .builder
+            .priv_op(Operation::set_insert(
+                user_groups.clone(),
+                old_user_groups.clone(),
+                (&op, "group"),
+            ))
+            .unwrap();
+        let st2 = self
+            .builder
+            .priv_op(Operation::dict_update(
+                new_rev.clone(),
+                old_rev,
+                (&op, "user"),
+                user_groups,
+            ))
+            .unwrap();
+        (
+            new_rev,
+            self.builder
+                .priv_op(Operation::custom(
+                    self.rev_predicates.add_existing.clone(),
+                    [st0, st1, st2],
+                ))
+                .unwrap(),
+        )
+    }
+
+    pub fn st_rev_add(&mut self, old_rev: Dictionary, op: Dictionary) -> (Dictionary, Statement) {
+        let user =
+            Key::from(String::try_from(op.get(&Key::from("user")).unwrap().typed()).unwrap());
+        let group =
+            Value::from(String::try_from(op.get(&Key::from("group")).unwrap().typed()).unwrap());
+        let st_none = Statement::None;
+        let (new, sts) = match old_rev.get(&user) {
+            Err(_) => {
+                let (new, st) = self.st_rev_add_fresh(old_rev, op, &user, &group);
+                (new, [st, st_none])
+            }
+            Ok(_) => {
+                let (new, st) = self.st_rev_add_existing(old_rev, op, &user, &group);
+                (new, [st_none, st])
+            }
+        };
+        (
+            new,
+            self.builder
+                .priv_op(Operation::custom(self.rev_predicates.add.clone(), sts))
+                .unwrap(),
+        )
+    }
+
+    pub fn st_rev_sync_add(
+        &mut self,
+        old_rev: Dictionary,
+        st_update: Statement,
+        old_st_rev_sync: Statement,
+        op: Dictionary,
+    ) -> (Dictionary, Statement) {
+        let st2 = self
+            .builder
+            .priv_op(Operation::dict_contains(op.clone(), "name", "add"))
+            .unwrap();
+        let (new, st3) = self.st_rev_add(old_rev, op);
+        (
+            new,
+            self.builder
+                .priv_op(Operation::custom(
+                    self.rev_predicates.sync_add.clone(),
+                    [old_st_rev_sync, st_update, st2, st3],
+                ))
+                .unwrap(),
+        )
     }
 
     pub fn st_rev_sync(
         &mut self,
         old_rev: Dictionary,
         op: Dictionary,
-        state_update_st: Statement,
+        st_update: Statement,
+        old_st_rev_sync: Statement,
     ) -> (Dictionary, Statement) {
         let name = String::try_from(op.get(&Key::from("name")).unwrap().typed()).unwrap();
         let st_none = Statement::None;
         let (new, sts) = match name.as_str() {
             "init" => {
                 // rev_sync_init(rev_state, state)
-                let (new, st) = self.st_rev_sync_init(state_update_st);
+                let (new, st) = self.st_rev_sync_init(st_update, op);
                 (new, [st, st_none.clone(), st_none.clone()])
             }
-            "add" => todo!(),
+            "add" => {
+                // rev_sync_add(rev_state, state)
+                let (new, st) = self.st_rev_sync_add(old_rev, st_update, old_st_rev_sync, op);
+                (new, [st_none.clone(), st, st_none.clone()])
+            }
             "del" => todo!(),
             _ => panic!("invalid op.name = {}", name),
         };
@@ -539,7 +724,7 @@ impl<'a> Helper<'a> {
 mod tests {
     use pod2::{
         backends::plonky2::mock::mainpod::MockProver,
-        frontend::MainPodBuilder,
+        frontend::{MainPod, MainPodBuilder},
         lang::PrettyPrint,
         middleware::{MainPodProver, Params, VDSet},
     };
@@ -555,13 +740,13 @@ mod tests {
         state: Dictionary,
         rev_state: Dictionary,
         op: Op,
-    ) -> (Dictionary, Dictionary) {
+        old_rev_state_pod: Option<MainPod>,
+    ) -> (Dictionary, Dictionary, Option<MainPod>) {
         let mut builder = MainPodBuilder::new(params, vd_set);
         let mut helper = Helper::new(&mut builder, predicates, rev_predicates);
 
         // State Pod
-        let (state, st_update, st_actual_update) =
-            helper.st_update(state, Dictionary::from(op.clone()));
+        let (state, st_update) = helper.st_update(state, Dictionary::from(op.clone()));
         builder.reveal(&st_update);
 
         let state_pod = builder.prove(prover).unwrap();
@@ -575,9 +760,15 @@ mod tests {
         // Reverse State Pod
         let mut builder = MainPodBuilder::new(params, vd_set);
         builder.add_pod(state_pod);
+        let old_st_rev_sync = if let Some(old_rev_state_pod) = old_rev_state_pod {
+            builder.add_pod(old_rev_state_pod.clone());
+            old_rev_state_pod.pod.pub_statements()[0].clone()
+        } else {
+            Statement::None
+        };
         let mut helper = Helper::new(&mut builder, predicates, rev_predicates);
         let (rev_state, rev_st_update) =
-            helper.st_rev_sync(rev_state, Dictionary::from(op), st_actual_update);
+            helper.st_rev_sync(rev_state, Dictionary::from(op), st_update, old_st_rev_sync);
         builder.reveal(&rev_st_update);
 
         let rev_state_pod = builder.prove(prover).unwrap();
@@ -588,7 +779,7 @@ mod tests {
         );
         rev_state_pod.pod.verify().unwrap();
 
-        (state, rev_state)
+        (state, rev_state, Some(rev_state_pod))
     }
 
     #[test]
@@ -610,13 +801,17 @@ mod tests {
             "# state\n:{}",
             Value::from(state.clone()).to_podlang_string()
         );
-
+        let mut rev_state_pod = None;
         for op in [
             Op::Init,
-            // Op::Add {
-            //     group: Red,
-            //     user: "alice".to_string(),
-            // },
+            Op::Add {
+                group: Red,
+                user: "alice".to_string(),
+            },
+            Op::Add {
+                group: Blue,
+                user: "alice".to_string(),
+            },
             // Op::Add {
             //     group: Blue,
             //     user: "bob".to_string(),
@@ -630,7 +825,7 @@ mod tests {
             //     user: "alice".to_string(),
             // },
         ] {
-            (state, rev_state) = update(
+            (state, rev_state, rev_state_pod) = update(
                 &params,
                 vd_set,
                 prover,
@@ -639,6 +834,7 @@ mod tests {
                 state,
                 rev_state,
                 op,
+                rev_state_pod,
             );
         }
     }
