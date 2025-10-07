@@ -133,10 +133,10 @@ mod tests {
         };
 
         let mut builder = MainPodBuilder::new(&params, &DEFAULT_VD_SET);
-        let set_entries = [1, 2, 3].into_iter().map(|n| n.into()).collect();
+        let set_entries = ["a", "2", "3"].into_iter().map(|n| n.into()).collect();
         let set = Set::new(10, set_entries)?;
 
-        builder.pub_op(Operation::set_contains(set, 1))?;
+        builder.pub_op(Operation::set_contains(set, "2"))?;
 
         let prover = Prover {};
         let pod = builder.prove(&prover).unwrap();
@@ -173,6 +173,23 @@ mod tests {
             common_circuit_data,
             proof_with_pis,
         )?;
+
+        Ok(())
+    }
+
+    #[ignore]
+    #[test]
+    fn test_prove_method() -> Result<()> {
+        // obtain the pod to be proven
+        let start = Instant::now();
+        let pod = compute_pod_proof()?;
+        println!(
+            "[TIME] generate pod & compute pod proof took: {:?}",
+            start.elapsed()
+        );
+
+        // compute its plonky2 & groth16 proof
+        let _ = prove(pod)?;
 
         Ok(())
     }
