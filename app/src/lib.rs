@@ -39,7 +39,6 @@ pub struct Predicates {
 
 #[derive(Debug, Clone)]
 pub struct RevPredicates {
-    pub init: CustomPredicateRef,
     pub add_fresh: CustomPredicateRef,
     pub add_existing: CustomPredicateRef,
     pub add: CustomPredicateRef,
@@ -117,8 +116,9 @@ impl From<Group> for TypedValue {
 ///   "blue" => Set(...),
 /// }
 pub fn build_predicates(params: &Params) -> (Predicates, RevPredicates) {
+    let empty = format!("Raw({:#})", EMPTY_VALUE);
     let empty_state = format!(
-        r#"{{"{r}": EMPTY, "{g}": EMPTY, "{b}": EMPTY}}"#,
+        r#"{{"{r}": {empty}, "{g}": {empty}, "{b}": {empty}}}"#,
         r = Group::Red,
         g = Group::Green,
         b = Group::Blue
@@ -130,7 +130,7 @@ pub fn build_predicates(params: &Params) -> (Predicates, RevPredicates) {
             // Input validation
             DictContains(op, "name", "init")
             // State transition
-            Equal(old, EMPTY)
+            Equal(old, {empty})
             Equal(new, {empty_state})
         )
 
@@ -159,140 +159,147 @@ pub fn build_predicates(params: &Params) -> (Predicates, RevPredicates) {
         )
     "#
     );
-    let input_state = input_state.replace("EMPTY", &format!("Raw({:#})", EMPTY_VALUE));
 
     let state_batch = parse(&input_state, params, &[]).unwrap().custom_batch;
 
+    let input_rev_add = format!(
+        r#"
+        // Addition
+        rev_add_fresh(new, old, user, group, private: user_groups) = AND(
+            SetInsert(user_groups, {empty}, group)
+            DictInsert(new, old, user, user_groups)
+        )
+
+        rev_add_existing(new, old, user, group, private: old_user_groups, user_groups) = AND(
+            DictContains(old, user, old_user_groups)
+            SetInsert(user_groups, old_user_groups, group)
+            DictUpdate(new, old, user, user_groups)
+        )
+
+        rev_add(new, old, user, group) = OR(
+            rev_add_fresh(new, old, user, group)
+            rev_add_existing(new, old, user, group)
+        )
+    "#
+    );
+
+    let rev_state_add_batch = parse(&input_rev_add, params, &[]).unwrap().custom_batch;
+
+    let input_rev_del = format!(
+        r#"
+        // Deletion
+        rev_del_singleton(new, old, user, group, private: old_user_groups) = AND(
+            DictContains(old, user, old_user_groups)
+            SetDelete({empty}, old_user_groups, group)
+            DictDelete(new, old, user)
+        )
+
+        rev_del_else(new, old, user, group, private: old_user_groups, user_groups) = AND(
+            DictContains(old, user, old_user_groups)
+            SetDelete(user_groups, old_user_groups, group)
+            DictContains(new, user, user_groups)
+        )
+
+        rev_del(new, old, user, group) = OR(
+            rev_del_singleton(new, old, user, group)
+            rev_del_else(new, old, user, group)
+        )
+    "#
+    );
+
+    let rev_state_del_batch = parse(&input_rev_del, params, &[]).unwrap().custom_batch;
+
     let input_rev = format!(
         r#"
-        use init, add, del, _ from 0x{}
-
-        // Reverse index predicates
-        rev_state_init(state) = AND(
-        Equal(state, EMPTY)
-        )
-
-        // Addition
-        rev_add_fresh(new, old, x, y, private: s) = AND(
-        SetInsert(s, EMPTY, y)
-        DictInsert(new, old, x, s)
-        )
-
-        rev_add_existing(new, old, x, y, private: old_s, s) = AND(
-        DictContains(old, x, old_s)
-        SetInsert(s, old_s, y)
-        DictUpdate(new, old, x, s)
-        )
-
-        rev_add(new, old, x, y) = OR(
-        rev_add_fresh(new, old, x, y)
-        rev_add_existing(new, old, x, y)
-        )
-
-        // Deletion
-        rev_del_singleton(new, old, x, y, private: s) = AND(
-        DictContains(old, x, s)
-        SetInsert(s, EMPTY, y)
-        DictDelete(new, old, x)
-        )
-
-        rev_del_else(new, old, x, y, private: old_s, s) = AND(
-        DictContains(old, x, old_s)
-        DictContains(new, x, s)
-        SetInsert(s, old_s, y)
-        )
-
-        rev_del(new, old, x, y) = OR(
-        rev_del_singleton(new, old, x, y)
-        rev_del_else(new, old, x, y)
-        )
+        use init, add, del, _ from 0x{state_batch}
+        use _, _, rev_add from 0x{rev_state_add_batch}
+        use _, _, rev_del from 0x{rev_state_del_batch}
 
         // Reverse index & state syncing
-        is_rev_init(rev_state, state, private: old, op) = AND(
-        Equal(rev_state, EMPTY)
-        init(state, old, op)
+        rev_sync_init(rev_state, state, private: old, op) = AND(
+            Equal(rev_state, {empty})
+            init(state, old, op)
         )
 
-        is_rev_add(rev_state, state, private: op, old_rev_state, old_state, user, group) = AND(
-        is_rev(old_rev_state, old_state)
-        add(state, old_state, op)
-        DictContains(op, "user", user)
-        DictContains(op, "group", group)
-        rev_add(rev_state, old_rev_state, user, group)
+        rev_sync_add(rev_state, state, private: op, old_rev_state, old_state, user, group) = AND(
+            rev_sync(old_rev_state, old_state)
+            add(state, old_state, op)
+            DictContains(op, "user", user)
+            DictContains(op, "group", group)
+            rev_add(rev_state, old_rev_state, user, group)
         )
 
-        is_rev_del(rev_state, state, private: op, old_rev_state, old_state, user, group) = AND(
-        is_rev(old_rev_state, old_state)
-        del(state, old_state, op)
-        DictContains(op, "user", user)
-        DictContains(op, "group", group)
-        rev_del(rev_state, old_rev_state, user, group)
+        rev_sync_del(rev_state, state, private: op, old_rev_state, old_state, user, group) = AND(
+            rev_sync(old_rev_state, old_state)
+            del(state, old_state, op)
+            DictContains(op, "user", user)
+            DictContains(op, "group", group)
+            rev_del(rev_state, old_rev_state, user, group)
         )
 
-        is_rev(rev_state, state) = OR(
-        is_rev_init(rev_state, state)
-        is_rev_add(rev_state, state)
-        is_rev_del(rev_state, state)
+        rev_sync(rev_state, state) = OR(
+            rev_sync_init(rev_state, state)
+            rev_sync_add(rev_state, state)
+            rev_sync_del(rev_state, state)
         )
         "#,
-        state_batch.id().encode_hex::<String>()
+        state_batch = state_batch.id().encode_hex::<String>(),
+        rev_state_add_batch = rev_state_add_batch.id().encode_hex::<String>(),
+        rev_state_del_batch = rev_state_del_batch.id().encode_hex::<String>(),
     );
-    let input_rev = input_rev.replace("EMPTY", &format!("Raw({:#})", EMPTY_VALUE));
 
-    let rev_state_batch = parse(&input_rev, params, &[state_batch.clone()])
-        .unwrap()
-        .custom_batch;
+    let rev_state_batch = parse(
+        &input_rev,
+        params,
+        &[
+            state_batch.clone(),
+            rev_state_add_batch.clone(),
+            rev_state_del_batch.clone(),
+        ],
+    )
+    .unwrap()
+    .custom_batch;
 
     // State batch predicates
-    let init_pred = state_batch.predicate_ref_by_name("init").unwrap();
-    let add_pred = state_batch.predicate_ref_by_name("add").unwrap();
-    let del_pred = state_batch.predicate_ref_by_name("del").unwrap();
-    let update_pred = state_batch.predicate_ref_by_name("update").unwrap();
 
     let state_preds = Predicates {
-        init: init_pred,
-        add: add_pred,
-        del: del_pred,
-        update: update_pred,
+        init: state_batch.predicate_ref_by_name("init").unwrap(),
+        add: state_batch.predicate_ref_by_name("add").unwrap(),
+        del: state_batch.predicate_ref_by_name("del").unwrap(),
+        update: state_batch.predicate_ref_by_name("update").unwrap(),
     };
 
     // Reverse index state predicates
-    let rev_init_pred = rev_state_batch
-        .predicate_ref_by_name("rev_state_init")
-        .unwrap();
-    let rev_add_fresh_pred = rev_state_batch
-        .predicate_ref_by_name("rev_add_fresh")
-        .unwrap();
-    let rev_add_existing_pred = rev_state_batch
-        .predicate_ref_by_name("rev_add_existing")
-        .unwrap();
-    let rev_add_pred = rev_state_batch.predicate_ref_by_name("rev_add").unwrap();
-    let rev_del_singleton_pred = rev_state_batch
-        .predicate_ref_by_name("rev_del_singleton")
-        .unwrap();
-    let rev_del_else_pred = rev_state_batch
-        .predicate_ref_by_name("rev_del_else")
-        .unwrap();
-    let rev_del_pred = rev_state_batch.predicate_ref_by_name("rev_del").unwrap();
-    let rev_sync_init_pred = rev_state_batch
-        .predicate_ref_by_name("is_rev_init")
-        .unwrap();
-    let rev_sync_add_pred = rev_state_batch.predicate_ref_by_name("is_rev_add").unwrap();
-    let rev_sync_del_pred = rev_state_batch.predicate_ref_by_name("is_rev_del").unwrap();
-    let rev_sync_pred = rev_state_batch.predicate_ref_by_name("is_rev").unwrap();
 
     let rev_preds = RevPredicates {
-        init: rev_init_pred,
-        add_fresh: rev_add_fresh_pred,
-        add_existing: rev_add_existing_pred,
-        add: rev_add_pred,
-        del_singleton: rev_del_singleton_pred,
-        del_else: rev_del_else_pred,
-        del: rev_del_pred,
-        sync_init: rev_sync_init_pred,
-        sync_add: rev_sync_add_pred,
-        sync_del: rev_sync_del_pred,
-        sync: rev_sync_pred,
+        add_fresh: rev_state_add_batch
+            .predicate_ref_by_name("rev_add_fresh")
+            .unwrap(),
+        add_existing: rev_state_add_batch
+            .predicate_ref_by_name("rev_add_existing")
+            .unwrap(),
+        add: rev_state_add_batch
+            .predicate_ref_by_name("rev_add")
+            .unwrap(),
+        del_singleton: rev_state_del_batch
+            .predicate_ref_by_name("rev_del_singleton")
+            .unwrap(),
+        del_else: rev_state_del_batch
+            .predicate_ref_by_name("rev_del_else")
+            .unwrap(),
+        del: rev_state_del_batch
+            .predicate_ref_by_name("rev_del")
+            .unwrap(),
+        sync_init: rev_state_batch
+            .predicate_ref_by_name("rev_sync_init")
+            .unwrap(),
+        sync_add: rev_state_batch
+            .predicate_ref_by_name("rev_sync_add")
+            .unwrap(),
+        sync_del: rev_state_batch
+            .predicate_ref_by_name("rev_sync_del")
+            .unwrap(),
+        sync: rev_state_batch.predicate_ref_by_name("rev_sync").unwrap(),
     };
 
     (state_preds, rev_preds)
@@ -353,23 +360,6 @@ impl<'a> Helper<'a> {
                 ))
                 .unwrap(),
         )
-    }
-
-    pub fn rev_st_init(&mut self, state_init_st: Statement) -> (Dictionary, Statement) {
-        let st_none = Statement::None;
-        let init_rev_state = Dictionary::new(DEPTH, HashMap::new()).unwrap();
-        let st0 = self
-            .builder
-            .priv_op(Operation::eq(init_rev_state.clone(), EMPTY_VALUE))
-            .unwrap();
-        let st2 = self
-            .builder
-            .priv_op(Operation::custom(
-                self.rev_predicates.sync_init.clone(),
-                [st0, state_init_st.clone()],
-            ))
-            .unwrap();
-        (init_rev_state, st2)
     }
 
     pub fn st_add_del(&mut self, old: Dictionary, op: Dictionary) -> (Dictionary, Statement) {
@@ -499,7 +489,24 @@ impl<'a> Helper<'a> {
         )
     }
 
-    pub fn rev_st_update(
+    pub fn st_rev_sync_init(&mut self, state_init_st: Statement) -> (Dictionary, Statement) {
+        let st_none = Statement::None;
+        let init_rev_state = Dictionary::new(DEPTH, HashMap::new()).unwrap();
+        let st0 = self
+            .builder
+            .priv_op(Operation::eq(init_rev_state.clone(), EMPTY_VALUE))
+            .unwrap();
+        let st2 = self
+            .builder
+            .priv_op(Operation::custom(
+                self.rev_predicates.sync_init.clone(),
+                [st0, state_init_st.clone()],
+            ))
+            .unwrap();
+        (init_rev_state, st2)
+    }
+
+    pub fn st_rev_sync(
         &mut self,
         old_rev: Dictionary,
         op: Dictionary,
@@ -509,8 +516,8 @@ impl<'a> Helper<'a> {
         let st_none = Statement::None;
         let (new, sts) = match name.as_str() {
             "init" => {
-                // init(new, old, op)
-                let (new, st) = self.rev_st_init(state_update_st);
+                // rev_sync_init(rev_state, state)
+                let (new, st) = self.st_rev_sync_init(state_update_st);
                 (new, [st, st_none.clone(), st_none.clone()])
             }
             "add" => todo!(),
@@ -520,7 +527,7 @@ impl<'a> Helper<'a> {
 
         (
             new,
-            // update(new, old, private: op)
+            // rev_sync(rev_state, state)
             self.builder
                 .priv_op(Operation::custom(self.rev_predicates.sync.clone(), sts))
                 .unwrap(),
@@ -552,20 +559,34 @@ mod tests {
         let mut builder = MainPodBuilder::new(params, vd_set);
         let mut helper = Helper::new(&mut builder, predicates, rev_predicates);
 
+        // State Pod
         let (state, st_update, st_actual_update) =
             helper.st_update(state, Dictionary::from(op.clone()));
-        let (rev_state, rev_st_update) =
-            helper.rev_st_update(rev_state, Dictionary::from(op), st_actual_update);
         builder.reveal(&st_update);
-        //        builder.reveal(&rev_st_update);
 
-        let pod = builder.prove(prover).unwrap();
-        println!("# pod\n:{}", pod);
+        let state_pod = builder.prove(prover).unwrap();
+        println!("# state_pod\n:{}", state_pod);
         println!(
             "# state\n:{}",
             Value::from(state.clone()).to_podlang_string()
         );
-        pod.pod.verify().unwrap();
+        state_pod.pod.verify().unwrap();
+
+        // Reverse State Pod
+        let mut builder = MainPodBuilder::new(params, vd_set);
+        builder.add_pod(state_pod);
+        let mut helper = Helper::new(&mut builder, predicates, rev_predicates);
+        let (rev_state, rev_st_update) =
+            helper.st_rev_sync(rev_state, Dictionary::from(op), st_actual_update);
+        builder.reveal(&rev_st_update);
+
+        let rev_state_pod = builder.prove(prover).unwrap();
+        println!("# rev_state_pod\n:{}", rev_state_pod);
+        println!(
+            "# state\n:{}",
+            Value::from(state.clone()).to_podlang_string()
+        );
+        rev_state_pod.pod.verify().unwrap();
 
         (state, rev_state)
     }
