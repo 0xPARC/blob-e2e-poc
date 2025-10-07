@@ -1,7 +1,12 @@
 #![allow(clippy::uninlined_format_args)]
 
-use std::{collections::HashSet, fmt, str::FromStr};
+use std::{
+    collections::{HashMap, HashSet},
+    fmt,
+    str::FromStr,
+};
 
+use hex::ToHex;
 use pod2::{
     frontend::{MainPodBuilder, Operation},
     lang::parse,
@@ -30,6 +35,21 @@ pub struct Predicates {
     pub add: CustomPredicateRef,
     pub del: CustomPredicateRef,
     pub update: CustomPredicateRef,
+}
+
+#[derive(Debug, Clone)]
+pub struct RevPredicates {
+    pub init: CustomPredicateRef,
+    pub add_fresh: CustomPredicateRef,
+    pub add_existing: CustomPredicateRef,
+    pub add: CustomPredicateRef,
+    pub del_singleton: CustomPredicateRef,
+    pub del_else: CustomPredicateRef,
+    pub del: CustomPredicateRef,
+    pub sync_init: CustomPredicateRef,
+    pub sync_add: CustomPredicateRef,
+    pub sync_del: CustomPredicateRef,
+    pub sync: CustomPredicateRef,
 }
 
 #[derive(PartialEq, Eq, Hash, Debug, Clone, Serialize, Deserialize)]
@@ -96,15 +116,22 @@ impl From<Group> for TypedValue {
 ///   "green" => Set(...),
 ///   "blue" => Set(...),
 /// }
-pub fn build_predicates(params: &Params) -> Predicates {
-    let input = format!(
+pub fn build_predicates(params: &Params) -> (Predicates, RevPredicates) {
+    let empty_state = format!(
+        r#"{{"{r}": EMPTY, "{g}": EMPTY, "{b}": EMPTY}}"#,
+        r = Group::Red,
+        g = Group::Green,
+        b = Group::Blue
+    );
+    let input_state = format!(
         r#"
+        // State predicates
         init(new, old, op) = AND(
             // Input validation
             DictContains(op, "name", "init")
             // State transition
             Equal(old, EMPTY)
-            Equal(new, {{"{}": EMPTY, "{}": EMPTY, "{}": EMPTY}})
+            Equal(new, {empty_state})
         )
 
         add(new, old, op, private: old_group, new_group) = AND(
@@ -130,37 +157,163 @@ pub fn build_predicates(params: &Params) -> Predicates {
             add(new, old, op)
             del(new, old, op)
         )
-    "#,
-        Group::Red,
-        Group::Green,
-        Group::Blue
+    "#
     );
-    let input = input.replace("EMPTY", &format!("Raw({:#})", EMPTY_VALUE));
+    let input_state = input_state.replace("EMPTY", &format!("Raw({:#})", EMPTY_VALUE));
 
-    let batch = parse(&input, params, &[]).unwrap().custom_batch;
+    let state_batch = parse(&input_state, params, &[]).unwrap().custom_batch;
 
-    let init_pred = batch.predicate_ref_by_name("init").unwrap();
-    let add_pred = batch.predicate_ref_by_name("add").unwrap();
-    let del_pred = batch.predicate_ref_by_name("del").unwrap();
-    let update_pred = batch.predicate_ref_by_name("update").unwrap();
-    Predicates {
+    let input_rev = format!(
+        r#"
+        use init, add, del, _ from 0x{}
+
+        // Reverse index predicates
+        rev_state_init(state) = AND(
+        Equal(state, EMPTY)
+        )
+
+        // Addition
+        rev_add_fresh(new, old, x, y, private: s) = AND(
+        SetInsert(s, EMPTY, y)
+        DictInsert(new, old, x, s)
+        )
+
+        rev_add_existing(new, old, x, y, private: old_s, s) = AND(
+        DictContains(old, x, old_s)
+        SetInsert(s, old_s, y)
+        DictUpdate(new, old, x, s)
+        )
+
+        rev_add(new, old, x, y) = OR(
+        rev_add_fresh(new, old, x, y)
+        rev_add_existing(new, old, x, y)
+        )
+
+        // Deletion
+        rev_del_singleton(new, old, x, y, private: s) = AND(
+        DictContains(old, x, s)
+        SetInsert(s, EMPTY, y)
+        DictDelete(new, old, x)
+        )
+
+        rev_del_else(new, old, x, y, private: old_s, s) = AND(
+        DictContains(old, x, old_s)
+        DictContains(new, x, s)
+        SetInsert(s, old_s, y)
+        )
+
+        rev_del(new, old, x, y) = OR(
+        rev_del_singleton(new, old, x, y)
+        rev_del_else(new, old, x, y)
+        )
+
+        // Reverse index & state syncing
+        is_rev_init(rev_state, state, private: old, op) = AND(
+        Equal(rev_state, EMPTY)
+        init(state, old, op)
+        )
+
+        is_rev_add(rev_state, state, private: op, old_rev_state, old_state, user, group) = AND(
+        is_rev(old_rev_state, old_state)
+        add(state, old_state, op)
+        DictContains(op, "user", user)
+        DictContains(op, "group", group)
+        rev_add(rev_state, old_rev_state, user, group)
+        )
+
+        is_rev_del(rev_state, state, private: op, old_rev_state, old_state, user, group) = AND(
+        is_rev(old_rev_state, old_state)
+        del(state, old_state, op)
+        DictContains(op, "user", user)
+        DictContains(op, "group", group)
+        rev_del(rev_state, old_rev_state, user, group)
+        )
+
+        is_rev(rev_state, state) = OR(
+        is_rev_init(rev_state, state)
+        is_rev_add(rev_state, state)
+        is_rev_del(rev_state, state)
+        )
+        "#,
+        state_batch.id().encode_hex::<String>()
+    );
+    let input_rev = input_rev.replace("EMPTY", &format!("Raw({:#})", EMPTY_VALUE));
+
+    let rev_state_batch = parse(&input_rev, params, &[state_batch.clone()])
+        .unwrap()
+        .custom_batch;
+
+    // State batch predicates
+    let init_pred = state_batch.predicate_ref_by_name("init").unwrap();
+    let add_pred = state_batch.predicate_ref_by_name("add").unwrap();
+    let del_pred = state_batch.predicate_ref_by_name("del").unwrap();
+    let update_pred = state_batch.predicate_ref_by_name("update").unwrap();
+
+    let state_preds = Predicates {
         init: init_pred,
         add: add_pred,
         del: del_pred,
         update: update_pred,
-    }
+    };
+
+    // Reverse index state predicates
+    let rev_init_pred = rev_state_batch
+        .predicate_ref_by_name("rev_state_init")
+        .unwrap();
+    let rev_add_fresh_pred = rev_state_batch
+        .predicate_ref_by_name("rev_add_fresh")
+        .unwrap();
+    let rev_add_existing_pred = rev_state_batch
+        .predicate_ref_by_name("rev_add_existing")
+        .unwrap();
+    let rev_add_pred = rev_state_batch.predicate_ref_by_name("rev_add").unwrap();
+    let rev_del_singleton_pred = rev_state_batch
+        .predicate_ref_by_name("rev_del_singleton")
+        .unwrap();
+    let rev_del_else_pred = rev_state_batch
+        .predicate_ref_by_name("rev_del_else")
+        .unwrap();
+    let rev_del_pred = rev_state_batch.predicate_ref_by_name("rev_del").unwrap();
+    let rev_sync_init_pred = rev_state_batch
+        .predicate_ref_by_name("is_rev_init")
+        .unwrap();
+    let rev_sync_add_pred = rev_state_batch.predicate_ref_by_name("is_rev_add").unwrap();
+    let rev_sync_del_pred = rev_state_batch.predicate_ref_by_name("is_rev_del").unwrap();
+    let rev_sync_pred = rev_state_batch.predicate_ref_by_name("is_rev").unwrap();
+
+    let rev_preds = RevPredicates {
+        init: rev_init_pred,
+        add_fresh: rev_add_fresh_pred,
+        add_existing: rev_add_existing_pred,
+        add: rev_add_pred,
+        del_singleton: rev_del_singleton_pred,
+        del_else: rev_del_else_pred,
+        del: rev_del_pred,
+        sync_init: rev_sync_init_pred,
+        sync_add: rev_sync_add_pred,
+        sync_del: rev_sync_del_pred,
+        sync: rev_sync_pred,
+    };
+
+    (state_preds, rev_preds)
 }
 
 pub struct Helper<'a> {
     pub builder: &'a mut MainPodBuilder,
     pub predicates: &'a Predicates,
+    pub rev_predicates: &'a RevPredicates,
 }
 
 impl<'a> Helper<'a> {
-    pub fn new(pod_builder: &'a mut MainPodBuilder, predicates: &'a Predicates) -> Self {
+    pub fn new(
+        pod_builder: &'a mut MainPodBuilder,
+        predicates: &'a Predicates,
+        rev_predicates: &'a RevPredicates,
+    ) -> Self {
         Self {
             builder: pod_builder,
             predicates,
+            rev_predicates,
         }
     }
 
@@ -200,6 +353,23 @@ impl<'a> Helper<'a> {
                 ))
                 .unwrap(),
         )
+    }
+
+    pub fn rev_st_init(&mut self, state_init_st: Statement) -> (Dictionary, Statement) {
+        let st_none = Statement::None;
+        let init_rev_state = Dictionary::new(DEPTH, HashMap::new()).unwrap();
+        let st0 = self
+            .builder
+            .priv_op(Operation::eq(init_rev_state.clone(), EMPTY_VALUE))
+            .unwrap();
+        let st2 = self
+            .builder
+            .priv_op(Operation::custom(
+                self.rev_predicates.sync_init.clone(),
+                [st0, state_init_st.clone()],
+            ))
+            .unwrap();
+        (init_rev_state, st2)
     }
 
     pub fn st_add_del(&mut self, old: Dictionary, op: Dictionary) -> (Dictionary, Statement) {
@@ -293,24 +463,28 @@ impl<'a> Helper<'a> {
         )
     }
 
-    pub fn st_update(&mut self, old: Dictionary, op: Dictionary) -> (Dictionary, Statement) {
+    pub fn st_update(
+        &mut self,
+        old: Dictionary,
+        op: Dictionary,
+    ) -> (Dictionary, Statement, Statement) {
         let name = String::try_from(op.get(&Key::from("name")).unwrap().typed()).unwrap();
         let st_none = Statement::None;
-        let (new, sts) = match name.as_str() {
+        let (new, sts, nontrivial_st) = match name.as_str() {
             "init" => {
                 // init(new, old, op)
                 let (new, st) = self.st_init(old, op);
-                (new, [st, st_none.clone(), st_none.clone()])
+                (new, [st.clone(), st_none.clone(), st_none.clone()], st)
             }
             "add" => {
                 // add(new, old, op, private: old_group, new_group)
                 let (new, st) = self.st_add_del(old, op);
-                (new, [st_none.clone(), st, st_none.clone()])
+                (new, [st_none.clone(), st.clone(), st_none.clone()], st)
             }
             "del" => {
                 // del(new, old, op, private: old_group, new_group)
                 let (new, st) = self.st_add_del(old, op);
-                (new, [st_none.clone(), st_none.clone(), st])
+                (new, [st_none.clone(), st_none.clone(), st.clone()], st)
             }
             _ => panic!("invalid op.name = {}", name),
         };
@@ -320,6 +494,35 @@ impl<'a> Helper<'a> {
             // update(new, old, private: op)
             self.builder
                 .priv_op(Operation::custom(self.predicates.update.clone(), sts))
+                .unwrap(),
+            nontrivial_st,
+        )
+    }
+
+    pub fn rev_st_update(
+        &mut self,
+        old_rev: Dictionary,
+        op: Dictionary,
+        state_update_st: Statement,
+    ) -> (Dictionary, Statement) {
+        let name = String::try_from(op.get(&Key::from("name")).unwrap().typed()).unwrap();
+        let st_none = Statement::None;
+        let (new, sts) = match name.as_str() {
+            "init" => {
+                // init(new, old, op)
+                let (new, st) = self.rev_st_init(state_update_st);
+                (new, [st, st_none.clone(), st_none.clone()])
+            }
+            "add" => todo!(),
+            "del" => todo!(),
+            _ => panic!("invalid op.name = {}", name),
+        };
+
+        (
+            new,
+            // update(new, old, private: op)
+            self.builder
+                .priv_op(Operation::custom(self.rev_predicates.sync.clone(), sts))
                 .unwrap(),
         )
     }
@@ -341,14 +544,20 @@ mod tests {
         vd_set: &VDSet,
         prover: &dyn MainPodProver,
         predicates: &Predicates,
+        rev_predicates: &RevPredicates,
         state: Dictionary,
+        rev_state: Dictionary,
         op: Op,
-    ) -> Dictionary {
+    ) -> (Dictionary, Dictionary) {
         let mut builder = MainPodBuilder::new(params, vd_set);
-        let mut helper = Helper::new(&mut builder, predicates);
+        let mut helper = Helper::new(&mut builder, predicates, rev_predicates);
 
-        let (state, st_update) = helper.st_update(state, Dictionary::from(op));
+        let (state, st_update, st_actual_update) =
+            helper.st_update(state, Dictionary::from(op.clone()));
+        let (rev_state, rev_st_update) =
+            helper.rev_st_update(rev_state, Dictionary::from(op), st_actual_update);
         builder.reveal(&st_update);
+        //        builder.reveal(&rev_st_update);
 
         let pod = builder.prove(prover).unwrap();
         println!("# pod\n:{}", pod);
@@ -358,7 +567,7 @@ mod tests {
         );
         pod.pod.verify().unwrap();
 
-        state
+        (state, rev_state)
     }
 
     #[test]
@@ -366,11 +575,16 @@ mod tests {
         env_logger::init();
         let (vd_set, prover) = (&VDSet::new(8, &[]).unwrap(), &MockProver {});
 
-        let params = Params::default();
-        let predicates = build_predicates(&params);
+        let params = Params {
+            max_custom_batch_size: 20,
+            max_custom_predicate_batches: 2,
+            ..Params::default()
+        };
+        let (state_predicates, rev_predicates) = build_predicates(&params);
 
         // Initial state
         let mut state = dict!({});
+        let mut rev_state = dict!({});
         println!(
             "# state\n:{}",
             Value::from(state.clone()).to_podlang_string()
@@ -378,24 +592,33 @@ mod tests {
 
         for op in [
             Op::Init,
-            Op::Add {
-                group: Red,
-                user: "alice".to_string(),
-            },
-            Op::Add {
-                group: Blue,
-                user: "bob".to_string(),
-            },
-            Op::Add {
-                group: Red,
-                user: "carol".to_string(),
-            },
-            Op::Del {
-                group: Red,
-                user: "alice".to_string(),
-            },
+            // Op::Add {
+            //     group: Red,
+            //     user: "alice".to_string(),
+            // },
+            // Op::Add {
+            //     group: Blue,
+            //     user: "bob".to_string(),
+            // },
+            // Op::Add {
+            //     group: Red,
+            //     user: "carol".to_string(),
+            // },
+            // Op::Del {
+            //     group: Red,
+            //     user: "alice".to_string(),
+            // },
         ] {
-            state = update(&params, vd_set, prover, &predicates, state, op);
+            (state, rev_state) = update(
+                &params,
+                vd_set,
+                prover,
+                &state_predicates,
+                &rev_predicates,
+                state,
+                rev_state,
+                op,
+            );
         }
     }
 }

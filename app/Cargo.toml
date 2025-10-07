@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+hex = { workspace = true }
 pod2 = { workspace = true }
 serde = { workspace = true }
 env_logger = { workspace = true }
