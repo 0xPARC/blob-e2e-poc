@@ -171,15 +171,11 @@ async fn handle_update(ctx: Arc<Context>, req_id: Uuid, id: i64, op: Op) -> Resu
     let start = std::time::Instant::now();
 
     let mut builder = MainPodBuilder::new(&ctx.pod_config.params, &ctx.pod_config.vd_set);
-    let mut helper = Helper::new(
-        &mut builder,
-        &ctx.pod_config.state_predicates,
-        &ctx.pod_config.rev_predicates,
-    );
+    let mut helper = Helper::new(&mut builder, &ctx.pod_config.state_predicates);
 
     let op = Dictionary::from(op);
 
-    let (new_state, st_update) = helper.st_update(state.0.clone(), op);
+    let (new_state, st_update) = helper.st_update(state.0.clone(), op)?;
     builder.reveal(&st_update);
 
     set_req_state(StateUpdate::ProvingMainPod).await;

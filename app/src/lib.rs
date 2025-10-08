@@ -6,6 +6,7 @@ use std::{
     str::FromStr,
 };
 
+use anyhow::{Context, Result};
 use common::set_from_value;
 use hex::ToHex;
 use pod2::{
@@ -342,23 +343,17 @@ pub fn build_predicates(params: &Params) -> (Predicates, RevPredicates) {
 pub struct Helper<'a> {
     pub builder: &'a mut MainPodBuilder,
     pub predicates: &'a Predicates,
-    pub rev_predicates: &'a RevPredicates,
 }
 
 impl<'a> Helper<'a> {
-    pub fn new(
-        pod_builder: &'a mut MainPodBuilder,
-        predicates: &'a Predicates,
-        rev_predicates: &'a RevPredicates,
-    ) -> Self {
+    pub fn new(pod_builder: &'a mut MainPodBuilder, predicates: &'a Predicates) -> Self {
         Self {
             builder: pod_builder,
             predicates,
-            rev_predicates,
         }
     }
 
-    pub fn st_init(&mut self, old: Dictionary, op: Dictionary) -> (Dictionary, Statement) {
+    pub fn st_init(&mut self, old: Dictionary, op: Dictionary) -> Result<(Dictionary, Statement)> {
         let name = String::try_from(op.get(&Key::from("name")).unwrap().typed()).unwrap();
         assert_eq!(name, "init");
         // DictContains(op, "name", "init")
@@ -370,7 +365,7 @@ impl<'a> Helper<'a> {
         let st1 = self
             .builder
             .priv_op(Operation::eq(old.clone(), EMPTY_VALUE))
-            .unwrap();
+            .context("old state is not empty")?;
 
         let empty_group = Value::from(Set::new(DEPTH, HashSet::new()).unwrap());
         let init_state = dict!({
@@ -384,19 +379,22 @@ impl<'a> Helper<'a> {
             .priv_op(Operation::eq(init_state.clone(), init_state.clone()))
             .unwrap();
 
-        (
-            init_state,
-            // init(new, old, op)
-            self.builder
-                .priv_op(Operation::custom(
-                    self.predicates.init.clone(),
-                    [st0, st1, st2],
-                ))
-                .unwrap(),
-        )
+        // init(new, old, op)
+        let st = self
+            .builder
+            .priv_op(Operation::custom(
+                self.predicates.init.clone(),
+                [st0, st1, st2],
+            ))
+            .unwrap();
+        Ok((init_state, st))
     }
 
-    pub fn st_add_del(&mut self, old: Dictionary, op: Dictionary) -> (Dictionary, Statement) {
+    pub fn st_add_del(
+        &mut self,
+        old: Dictionary,
+        op: Dictionary,
+    ) -> Result<(Dictionary, Statement)> {
         let name = String::try_from(op.get(&Key::from("name")).unwrap().typed()).unwrap();
         assert!(name == "add" || name == "del");
 
@@ -439,7 +437,7 @@ impl<'a> Helper<'a> {
                     old_group.clone(),
                     (&op, "user"),
                 ))
-                .unwrap()
+                .context("old_group already contains user")?
         } else {
             new_group.delete(user).unwrap();
             // SetDelete(new_group, old_group, op.user)
@@ -449,7 +447,7 @@ impl<'a> Helper<'a> {
                     old_group.clone(),
                     (&op, "user"),
                 ))
-                .unwrap()
+                .context("old_group doesn't contain user")?
         };
 
         let mut new = old.clone();
@@ -465,57 +463,78 @@ impl<'a> Helper<'a> {
             ))
             .unwrap();
 
-        (
-            new,
-            if name == "add" {
-                // add(new, old, op, private: old_group, new_group)
-                self.builder
-                    .priv_op(Operation::custom(
-                        self.predicates.add.clone(),
-                        [st0, st1, st2, st3],
-                    ))
-                    .unwrap()
-            } else {
-                // del(new, old, op, private: old_group, new_group)
-                self.builder
-                    .priv_op(Operation::custom(
-                        self.predicates.del.clone(),
-                        [st0, st1, st2, st3],
-                    ))
-                    .unwrap()
-            },
-        )
+        let st = if name == "add" {
+            // add(new, old, op, private: old_group, new_group)
+            self.builder
+                .priv_op(Operation::custom(
+                    self.predicates.add.clone(),
+                    [st0, st1, st2, st3],
+                ))
+                .unwrap()
+        } else {
+            // del(new, old, op, private: old_group, new_group)
+            self.builder
+                .priv_op(Operation::custom(
+                    self.predicates.del.clone(),
+                    [st0, st1, st2, st3],
+                ))
+                .unwrap()
+        };
+        Ok((new, st))
     }
 
-    pub fn st_update(&mut self, old: Dictionary, op: Dictionary) -> (Dictionary, Statement) {
+    pub fn st_update(
+        &mut self,
+        old: Dictionary,
+        op: Dictionary,
+    ) -> Result<(Dictionary, Statement)> {
         let name = String::try_from(op.get(&Key::from("name")).unwrap().typed()).unwrap();
         let st_none = Statement::None;
         let (new, sts) = match name.as_str() {
             "init" => {
                 // init(new, old, op)
-                let (new, st) = self.st_init(old, op);
+                let (new, st) = self.st_init(old, op)?;
                 (new, [st, st_none.clone(), st_none.clone()])
             }
             "add" => {
                 // add(new, old, op, private: old_group, new_group)
-                let (new, st) = self.st_add_del(old, op);
+                let (new, st) = self.st_add_del(old, op)?;
                 (new, [st_none.clone(), st, st_none.clone()])
             }
             "del" => {
                 // del(new, old, op, private: old_group, new_group)
-                let (new, st) = self.st_add_del(old, op);
+                let (new, st) = self.st_add_del(old, op)?;
                 (new, [st_none.clone(), st_none.clone(), st])
             }
             _ => panic!("invalid op.name = {}", name),
         };
 
-        (
-            new,
-            // update(new, old, op)
-            self.builder
-                .priv_op(Operation::custom(self.predicates.update.clone(), sts))
-                .unwrap(),
-        )
+        // update(new, old, op)
+        let st = self
+            .builder
+            .priv_op(Operation::custom(self.predicates.update.clone(), sts))
+            .unwrap();
+        Ok((new, st))
+    }
+}
+
+pub struct RevHelper<'a> {
+    pub builder: &'a mut MainPodBuilder,
+    pub predicates: &'a Predicates,
+    pub rev_predicates: &'a RevPredicates,
+}
+
+impl<'a> RevHelper<'a> {
+    pub fn new(
+        pod_builder: &'a mut MainPodBuilder,
+        predicates: &'a Predicates,
+        rev_predicates: &'a RevPredicates,
+    ) -> Self {
+        Self {
+            builder: pod_builder,
+            predicates,
+            rev_predicates,
+        }
     }
 
     pub fn st_rev_sync_init(
@@ -903,10 +922,12 @@ mod tests {
         old_rev_state_pod: Option<MainPod>,
     ) -> (Dictionary, Dictionary, Option<MainPod>) {
         let mut builder = MainPodBuilder::new(params, vd_set);
-        let mut helper = Helper::new(&mut builder, predicates, rev_predicates);
+        let mut helper = Helper::new(&mut builder, predicates);
 
         // State Pod
-        let (state, st_update) = helper.st_update(state, Dictionary::from(op.clone()));
+        let (state, st_update) = helper
+            .st_update(state, Dictionary::from(op.clone()))
+            .unwrap();
         builder.reveal(&st_update);
 
         let state_pod = builder.prove(prover).unwrap();
@@ -926,9 +947,9 @@ mod tests {
         } else {
             Statement::None
         };
-        let mut helper = Helper::new(&mut builder, predicates, rev_predicates);
+        let mut rev_helper = RevHelper::new(&mut builder, predicates, rev_predicates);
         let (rev_state, rev_st_update) =
-            helper.st_rev_sync(rev_state, Dictionary::from(op), st_update, old_st_rev_sync);
+            rev_helper.st_rev_sync(rev_state, Dictionary::from(op), st_update, old_st_rev_sync);
         builder.reveal(&rev_st_update);
 
         let rev_state_pod = builder.prove(prover).unwrap();

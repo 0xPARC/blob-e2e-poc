@@ -8,5 +8,6 @@ hex = { workspace = true }
 pod2 = { workspace = true }
 serde = { workspace = true }
 env_logger = { workspace = true }
+anyhow = { workspace = true }
 
 common = { path = "../common" }

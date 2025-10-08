@@ -250,7 +250,7 @@ mod tests {
         println!("ShrunkMainPod setup");
         let shrunk_main_pod_build = ShrunkMainPodSetup::new(&params).build().unwrap();
         let common_data = &shrunk_main_pod_build.circuit_data.common;
-        let (state_predicates, rev_predicates) = app::build_predicates(&params);
+        let (state_predicates, _rev_predicates) = app::build_predicates(&params);
         let id = Hash([F(1), F(2), F(3), F(4)]);
         let custom_predicate_ref = CustomPredicateRef {
             batch: CustomPredicateBatch::new_opaque(
@@ -274,12 +274,12 @@ mod tests {
         assert_eq!(payload_create, payload_create_decoded);
 
         let mut builder = MainPodBuilder::new(&params, vd_set);
-        let (state_predicates, rev_predicates) = app::build_predicates(&params);
+        let (state_predicates, _rev_predicates) = app::build_predicates(&params);
         let mut helper = app::Helper::new(&mut builder, &state_predicates);
 
         let state =
             containers::Dictionary::new(params.max_depth_mt_containers, HashMap::new()).unwrap();
-        let (new_state, st_update) = helper.st_update(state.clone(), Op::Init.into());
+        let (new_state, st_update) = helper.st_update(state.clone(), Op::Init.into()).unwrap();
         println!("st: {st_update:?}");
         builder.reveal(&st_update);
 
