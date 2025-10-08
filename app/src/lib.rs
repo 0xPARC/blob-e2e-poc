@@ -905,11 +905,7 @@ impl<'a> RevHelper<'a> {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
-
-    use common::disk::{load_pod, store_pod};
     use pod2::{
-        // backends::plonky2::mock::mainpod::MockProver,
         backends::plonky2::mainpod::Prover,
         frontend::{MainPod, MainPodBuilder},
         lang::PrettyPrint,
@@ -929,45 +925,23 @@ mod tests {
         rev_state: Dictionary,
         op: Op,
         old_rev_state_pod: Option<MainPod>,
-        num: u64,
     ) -> (Dictionary, Dictionary, Option<MainPod>) {
-        let name = format!("test_state_pod-{}", num);
-        let state = {
-            let mut builder = MainPodBuilder::new(params, vd_set);
-            let mut helper = Helper::new(&mut builder, predicates);
+        let mut builder = MainPodBuilder::new(params, vd_set);
+        let mut helper = Helper::new(&mut builder, predicates);
 
-            // State Pod
-            let (state, st_update) = helper
-                .st_update(state, Dictionary::from(op.clone()))
-                .unwrap();
-            builder.reveal(&st_update);
+        // State Pod
+        let (state, st_update) = helper
+            .st_update(state, Dictionary::from(op.clone()))
+            .unwrap();
+        builder.reveal(&st_update);
 
-            let state_pod = builder.prove(prover).unwrap();
-            println!("# state_pod\n:{}", state_pod);
-            println!(
-                "# state\n:{}",
-                Value::from(state.clone()).to_podlang_string()
-            );
-            state_pod.pod.verify().unwrap();
-
-            store_pod(Path::new("/tmp/"), &name, &state_pod).unwrap();
-
-            state
-        };
-
-        // FIXME: Unsuccessful attempt to reproduce the bug in the
-        // `ad_server::queue::handle_update_rev`.  But here it works...
-
-        // store & load
-        let state_pod = load_pod(Path::new("/tmp/"), &name).unwrap();
-
-        let st_update = state_pod.pod.pub_statements()[0].clone();
-        let arg2 = st_update.args()[2].literal().unwrap();
-        let op = if let TypedValue::Dictionary(op) = arg2.typed() {
-            op.clone()
-        } else {
-            panic!("Value not a Dictionary: {:?}", arg2)
-        };
+        let state_pod = builder.prove(prover).unwrap();
+        println!("# state_pod\n:{}", state_pod);
+        println!(
+            "# state\n:{}",
+            Value::from(state.clone()).to_podlang_string()
+        );
+        state_pod.pod.verify().unwrap();
 
         // Reverse State Pod
         let mut builder = MainPodBuilder::new(params, vd_set);
@@ -980,7 +954,7 @@ mod tests {
         };
         let mut rev_helper = RevHelper::new(&mut builder, predicates, rev_predicates);
         let (rev_state, rev_st_update) =
-            rev_helper.st_rev_sync(rev_state, op, st_update, old_st_rev_sync);
+            rev_helper.st_rev_sync(rev_state, Dictionary::from(op), st_update, old_st_rev_sync);
         builder.reveal(&rev_st_update);
 
         let rev_state_pod = builder.prove(prover).unwrap();
@@ -1011,7 +985,6 @@ mod tests {
             Value::from(state.clone()).to_podlang_string()
         );
         let mut rev_state_pod = None;
-        let mut num = 1;
         for op in [
             Op::Init,
             Op::Add {
@@ -1045,9 +1018,7 @@ mod tests {
                 rev_state,
                 op,
                 rev_state_pod,
-                num,
             );
-            num += 1;
         }
     }
 }
