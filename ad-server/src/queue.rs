@@ -6,6 +6,7 @@ use app::{Group, Helper, Op};
 use common::{
     ProofType, groth,
     payload::{Payload, PayloadCreate, PayloadProof, PayloadUpdate},
+    set_from_value,
     shrink::shrink_compress_pod,
 };
 use pod2::{
@@ -263,11 +264,4 @@ async fn handle_query(ctx: Arc<Context>, req_id: Uuid, id: i64, user: Value) -> 
     set_req_state(StateQuery::Complete { result }).await;
 
     Ok(())
-}
-
-fn set_from_value(v: &Value) -> Result<containers::Set> {
-    match v.typed() {
-        pod2::middleware::TypedValue::Set(s) => Ok(s.clone()),
-        _ => Err(anyhow!("Invalid set")),
-    }
 }

@@ -6,6 +6,7 @@ use std::{
     str::FromStr,
 };
 
+use common::set_from_value;
 use hex::ToHex;
 use pod2::{
     frontend::{MainPodBuilder, Operation},
@@ -231,7 +232,7 @@ pub fn build_predicates(params: &Params) -> (Predicates, RevPredicates) {
         rev_del_else(new, old, op, private: old_user_groups, user_groups) = AND(
             DictContains(old, op.user, old_user_groups)
             SetDelete(user_groups, old_user_groups, op.group)
-            DictContains(new, op.user, user_groups)
+            DictUpdate(new, old, op.user, user_groups)
         )
 
         rev_del(new, old, op) = OR(
@@ -663,6 +664,138 @@ impl<'a> Helper<'a> {
         )
     }
 
+    pub fn st_rev_del_singleton(
+        &mut self,
+        old_rev: Dictionary,
+        op: Dictionary,
+        user: &Key,
+    ) -> (Dictionary, Statement) {
+        let old_user_groups = old_rev.get(user).unwrap();
+        let empty_set = Set::new(DEPTH, HashSet::new()).unwrap();
+        let mut new_rev = old_rev.clone();
+        new_rev.delete(user).unwrap();
+
+        let st0 = self
+            .builder
+            .priv_op(Operation::dict_contains(
+                old_rev.clone(),
+                (&op, "user"),
+                old_user_groups.clone(),
+            ))
+            .unwrap();
+        let st1 = self
+            .builder
+            .priv_op(Operation::set_delete(
+                empty_set,
+                old_user_groups.clone(),
+                (&op, "group"),
+            ))
+            .unwrap();
+        let st2 = self
+            .builder
+            .priv_op(Operation::dict_delete(
+                new_rev.clone(),
+                old_rev,
+                (&op, "user"),
+            ))
+            .unwrap();
+        (
+            new_rev,
+            self.builder
+                .priv_op(Operation::custom(
+                    self.rev_predicates.del_singleton.clone(),
+                    [st0, st1, st2],
+                ))
+                .unwrap(),
+        )
+    }
+
+    pub fn st_rev_del_else(
+        &mut self,
+        old_rev: Dictionary,
+        op: Dictionary,
+        user: &Key,
+        group: &Value,
+    ) -> (Dictionary, Statement) {
+        let old_user_groups = old_rev.get(user).unwrap();
+        let mut user_groups = if let TypedValue::Set(set) = old_user_groups.typed() {
+            set.clone()
+        } else {
+            panic!("Value not a Set: {:?}", old_user_groups)
+        };
+        user_groups.delete(group).unwrap();
+        let mut new_rev = old_rev.clone();
+        new_rev
+            .update(user, &Value::from(user_groups.clone()))
+            .unwrap();
+
+        let st0 = self
+            .builder
+            .priv_op(Operation::dict_contains(
+                old_rev.clone(),
+                (&op, "user"),
+                old_user_groups.clone(),
+            ))
+            .unwrap();
+        let st1 = self
+            .builder
+            .priv_op(Operation::set_delete(
+                user_groups.clone(),
+                old_user_groups.clone(),
+                (&op, "group"),
+            ))
+            .unwrap();
+        let st2 = self
+            .builder
+            .priv_op(Operation::dict_update(
+                new_rev.clone(),
+                old_rev,
+                (&op, "user"),
+                user_groups,
+            ))
+            .unwrap();
+        (
+            new_rev,
+            self.builder
+                .priv_op(Operation::custom(
+                    self.rev_predicates.del_else.clone(),
+                    [st0, st1, st2],
+                ))
+                .unwrap(),
+        )
+    }
+
+    pub fn st_rev_del(&mut self, old_rev: Dictionary, op: Dictionary) -> (Dictionary, Statement) {
+        let user =
+            Key::from(String::try_from(op.get(&Key::from("user")).unwrap().typed()).unwrap());
+        let group =
+            Value::from(String::try_from(op.get(&Key::from("group")).unwrap().typed()).unwrap());
+        let st_none = Statement::None;
+        let groups = set_from_value(old_rev.get(&user).unwrap()).unwrap();
+
+        let (new, sts) = match groups.set().len() {
+            1 => {
+                if groups.contains(&group) {
+                    let (new, st) = self.st_rev_del_singleton(old_rev, op, &user);
+                    (new, [st, st_none])
+                } else {
+                    panic!("User is not a member of the specified group.")
+                }
+            }
+            _ => {
+                let (new, st) = self.st_rev_del_else(old_rev, op, &user, &group);
+                (new, [st_none, st])
+            }
+        };
+
+        (
+            new,
+            self.builder
+                .priv_op(Operation::custom(self.rev_predicates.del.clone(), sts))
+                .unwrap(),
+        )
+    }
+
     pub fn st_rev_sync_add(
         &mut self,
         old_rev: Dictionary,
@@ -680,6 +813,29 @@ impl<'a> Helper<'a> {
             self.builder
                 .priv_op(Operation::custom(
                     self.rev_predicates.sync_add.clone(),
+                    [old_st_rev_sync, st_update, st2, st3],
+                ))
+                .unwrap(),
+        )
+    }
+
+    pub fn st_rev_sync_del(
+        &mut self,
+        old_rev: Dictionary,
+        st_update: Statement,
+        old_st_rev_sync: Statement,
+        op: Dictionary,
+    ) -> (Dictionary, Statement) {
+        let st2 = self
+            .builder
+            .priv_op(Operation::dict_contains(op.clone(), "name", "del"))
+            .unwrap();
+        let (new, st3) = self.st_rev_del(old_rev, op);
+        (
+            new,
+            self.builder
+                .priv_op(Operation::custom(
+                    self.rev_predicates.sync_del.clone(),
                     [old_st_rev_sync, st_update, st2, st3],
                 ))
                 .unwrap(),
@@ -706,7 +862,11 @@ impl<'a> Helper<'a> {
                 let (new, st) = self.st_rev_sync_add(old_rev, st_update, old_st_rev_sync, op);
                 (new, [st_none.clone(), st, st_none.clone()])
             }
-            "del" => todo!(),
+            "del" => {
+                // rev_sync_del(rev_state, state)
+                let (new, st) = self.st_rev_sync_del(old_rev, st_update, old_st_rev_sync, op);
+                (new, [st_none.clone(), st_none.clone(), st])
+            }
             _ => panic!("invalid op.name = {}", name),
         };
 
@@ -812,18 +972,18 @@ mod tests {
                 group: Blue,
                 user: "alice".to_string(),
             },
-            // Op::Add {
-            //     group: Blue,
-            //     user: "bob".to_string(),
-            // },
-            // Op::Add {
-            //     group: Red,
-            //     user: "carol".to_string(),
-            // },
-            // Op::Del {
-            //     group: Red,
-            //     user: "alice".to_string(),
-            // },
+            Op::Add {
+                group: Blue,
+                user: "bob".to_string(),
+            },
+            Op::Add {
+                group: Red,
+                user: "carol".to_string(),
+            },
+            Op::Del {
+                group: Red,
+                user: "alice".to_string(),
+            },
         ] {
             (state, rev_state, rev_state_pod) = update(
                 &params,
