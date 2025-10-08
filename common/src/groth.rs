@@ -52,24 +52,36 @@ mod tests {
     use anyhow::Result;
     use pod2::{
         backends::plonky2::{basetypes::DEFAULT_VD_SET, mainpod::Prover},
-        frontend::{MainPodBuilder, Operation},
-        middleware::{Params, containers::Set},
+        frontend::MainPodBuilder,
+        middleware::{Params, containers::Dictionary},
     };
 
     use super::*;
 
-    // returns a MainPod, example adapted from pod2/examples/main_pod_points.rs
+    // returns a MainPod, similar to the one that will be created by the AD-Server
     fn compute_pod_proof() -> Result<pod2::frontend::MainPod> {
-        let params = Params {
-            max_input_pods: 0,
-            ..Default::default()
+        let params = Params::default();
+        let vd_set = &*DEFAULT_VD_SET;
+        let predicates = app::build_predicates(&params);
+
+        let mut builder = MainPodBuilder::new(&params, vd_set);
+        let mut helper = app::Helper::new(&mut builder, &predicates);
+
+        let initial_state = Dictionary::new(
+            params.max_depth_mt_containers,
+            std::collections::HashMap::new(),
+        )
+        .unwrap();
+        let (state, _st_update) = helper.st_update(initial_state.clone(), app::Op::Init.into());
+
+        let op = app::Op::Add {
+            group: app::Group::Red,
+            user: "user1".to_string(),
         };
+        let op = Dictionary::from(op);
 
-        let mut builder = MainPodBuilder::new(&params, &DEFAULT_VD_SET);
-        let set_entries = ["a", "2", "3"].into_iter().map(|n| n.into()).collect();
-        let set = Set::new(10, set_entries)?;
-
-        builder.pub_op(Operation::set_contains(set, "2"))?;
+        let (_new_state, st_update) = helper.st_update(state.clone(), op);
+        builder.reveal(&st_update);
 
         let prover = Prover {};
         let pod = builder.prove(&prover).unwrap();
@@ -101,7 +113,7 @@ mod tests {
 
         // store the files
         pod2_onchain::pod::store_files(
-            &Path::new(INPUT_PATH),
+            Path::new(INPUT_PATH),
             verifier_data.verifier_only,
             common_circuit_data,
             proof_with_pis,
@@ -125,7 +137,7 @@ mod tests {
         if !Path::new(OUTPUT_PATH).is_dir() {
             println!("generating groth16's trusted setup");
             let result = pod2_onchain::trusted_setup(INPUT_PATH, OUTPUT_PATH);
-            println!("trusted_setup result: {}", result);
+            println!("trusted_setup result: {result}");
         } else {
             println!("trusted setup already exists, skipping generation");
         }
@@ -149,8 +161,7 @@ mod tests {
 
         // compute its plonky2 & groth16 proof
         let (g16_proof, g16_pub_inp) = prove(pod)?;
-        let v = pod2_onchain::groth16_verify(g16_proof, g16_pub_inp)?;
-        dbg!(&v);
+        pod2_onchain::groth16_verify(g16_proof, g16_pub_inp)?;
 
         Ok(())
     }
