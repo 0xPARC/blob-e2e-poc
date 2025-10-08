@@ -153,10 +153,7 @@ async fn handle_create(ctx: Arc<Context>, req_id: Uuid) -> Result<()> {
     let membership_list = db::AdState {
         id: new_id,
         num: 0,
-        state: db::DictContainerSql(containers::Dictionary::new(
-            ctx.pod_config.params.max_depth_mt_containers,
-            HashMap::new(),
-        )?),
+        state: db::DictContainerSql(dict!(ctx.pod_config.params.max_depth_mt_containers, {})?),
     };
 
     // send the payload to ethereum
@@ -172,6 +169,12 @@ async fn handle_create(ctx: Arc<Context>, req_id: Uuid) -> Result<()> {
 
     // update db
     db::insert_membership_list(&ctx.db_pool, &membership_list).await?;
+    let rev_membership_list = db::AdState {
+        id: new_id,
+        num: 0,
+        state: db::DictContainerSql(dict!(ctx.pod_config.params.max_depth_mt_containers, {})?),
+    };
+    db::insert_rev_membership_list(&ctx.db_pool, &rev_membership_list).await?;
 
     set_req_state(StateCreate::Complete {
         id: membership_list.id,

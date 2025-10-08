@@ -81,6 +81,19 @@ pub async fn insert_membership_list(
     Ok(())
 }
 
+pub async fn insert_rev_membership_list(
+    pool: &SqlitePool,
+    rev_membership_list: &AdState,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("INSERT INTO rev_membership_list (id, num, state) VALUES (?, ?, ?);")
+        .bind(rev_membership_list.id)
+        .bind(rev_membership_list.num)
+        .bind(rev_membership_list.state.to_bytes())
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
 pub async fn get_membership_list(pool: &SqlitePool, id: i64) -> Result<AdState, sqlx::Error> {
     let (state_bytes, num): (Vec<u8>, i64) =
         sqlx::query_as("SELECT state, num FROM membership_list WHERE id = ?;")

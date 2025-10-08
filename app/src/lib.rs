@@ -868,10 +868,6 @@ impl<'a> RevHelper<'a> {
         st_update: Statement,
         old_st_rev_sync: Statement,
     ) -> (Dictionary, Statement) {
-        println!("DBG old_rev: {:?}", old_rev.kvs());
-        println!("DBG op: {:?}", op.kvs());
-        println!("DBG st_update: {}", st_update);
-        println!("DBG old_st_rev_sync: {}", old_st_rev_sync);
         let name = String::try_from(op.get(&Key::from("name")).unwrap().typed()).unwrap();
         let st_none = Statement::None;
         let (new, sts) = match name.as_str() {
