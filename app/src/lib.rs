@@ -929,30 +929,37 @@ mod tests {
         rev_state: Dictionary,
         op: Op,
         old_rev_state_pod: Option<MainPod>,
+        num: u64,
     ) -> (Dictionary, Dictionary, Option<MainPod>) {
-        let mut builder = MainPodBuilder::new(params, vd_set);
-        let mut helper = Helper::new(&mut builder, predicates);
+        let name = format!("test_state_pod-{}", num);
+        let state = {
+            let mut builder = MainPodBuilder::new(params, vd_set);
+            let mut helper = Helper::new(&mut builder, predicates);
 
-        // State Pod
-        let (state, st_update) = helper
-            .st_update(state, Dictionary::from(op.clone()))
-            .unwrap();
-        builder.reveal(&st_update);
+            // State Pod
+            let (state, st_update) = helper
+                .st_update(state, Dictionary::from(op.clone()))
+                .unwrap();
+            builder.reveal(&st_update);
 
-        let state_pod = builder.prove(prover).unwrap();
-        println!("# state_pod\n:{}", state_pod);
-        println!(
-            "# state\n:{}",
-            Value::from(state.clone()).to_podlang_string()
-        );
-        state_pod.pod.verify().unwrap();
+            let state_pod = builder.prove(prover).unwrap();
+            println!("# state_pod\n:{}", state_pod);
+            println!(
+                "# state\n:{}",
+                Value::from(state.clone()).to_podlang_string()
+            );
+            state_pod.pod.verify().unwrap();
+
+            store_pod(Path::new("/tmp/"), &name, &state_pod).unwrap();
+
+            state
+        };
 
         // FIXME: Unsuccessful attempt to reproduce the bug in the
         // `ad_server::queue::handle_update_rev`.  But here it works...
 
         // store & load
-        store_pod(Path::new("/tmp/"), "test_state_pod", &state_pod).unwrap();
-        let state_pod = load_pod(Path::new("/tmp/"), "test_state_pod").unwrap();
+        let state_pod = load_pod(Path::new("/tmp/"), &name).unwrap();
 
         let st_update = state_pod.pod.pub_statements()[0].clone();
         let arg2 = st_update.args()[2].literal().unwrap();
@@ -979,8 +986,8 @@ mod tests {
         let rev_state_pod = builder.prove(prover).unwrap();
         println!("# rev_state_pod\n:{}", rev_state_pod);
         println!(
-            "# state\n:{}",
-            Value::from(state.clone()).to_podlang_string()
+            "# rev_state\n:{}",
+            Value::from(rev_state.clone()).to_podlang_string()
         );
         rev_state_pod.pod.verify().unwrap();
 
@@ -1004,6 +1011,7 @@ mod tests {
             Value::from(state.clone()).to_podlang_string()
         );
         let mut rev_state_pod = None;
+        let mut num = 1;
         for op in [
             Op::Init,
             Op::Add {
@@ -1037,7 +1045,9 @@ mod tests {
                 rev_state,
                 op,
                 rev_state_pod,
+                num,
             );
+            num += 1;
         }
     }
 }
