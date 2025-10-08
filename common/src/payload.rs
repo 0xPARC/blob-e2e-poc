@@ -203,6 +203,7 @@ pub struct PayloadUpdate {
     pub id: Hash,
     pub proof: PayloadProof,
     pub new_state: RawValue,
+    pub op: RawValue,
 }
 
 impl PayloadUpdate {
@@ -210,6 +211,7 @@ impl PayloadUpdate {
         write_elems(buffer, &self.id.0);
         self.proof.write_bytes(buffer);
         write_elems(buffer, &self.new_state.0);
+        write_elems(buffer, &self.op.0);
     }
 
     pub fn from_bytes(bytes: &[u8], common_data: &CommonCircuitData) -> Result<Self> {
@@ -218,10 +220,12 @@ impl PayloadUpdate {
         let (proof, len) = PayloadProof::from_bytes(bytes, common_data)?;
         bytes = &bytes[len..];
         let new_state = RawValue(read_elems(&mut bytes)?);
+        let op = RawValue(read_elems(&mut bytes)?);
         Ok(Self {
             id,
             proof,
             new_state,
+            op,
         })
     }
 }
@@ -238,7 +242,7 @@ mod tests {
             mainpod::{Prover, calculate_statements_hash},
         },
         frontend::MainPodBuilder,
-        middleware::{Params, Statement, Value, containers},
+        middleware::{Params, Statement, Value, containers, containers::Dictionary},
     };
 
     use super::*;
@@ -279,7 +283,11 @@ mod tests {
 
         let state =
             containers::Dictionary::new(params.max_depth_mt_containers, HashMap::new()).unwrap();
-        let (new_state, st_update) = helper.st_update(state.clone(), Op::Init.into()).unwrap();
+        let state_raw = RawValue::from(state.commitment());
+        let op = Dictionary::from(Op::Init);
+        let op_raw = RawValue::from(op.commitment());
+        let (new_state, st_update) = helper.st_update(state.clone(), op).unwrap();
+        let new_state_raw = RawValue::from(new_state.commitment());
         println!("st: {st_update:?}");
         builder.reveal(&st_update);
 
@@ -294,7 +302,8 @@ mod tests {
         let payload_update = Payload::Update(PayloadUpdate {
             id,
             proof: PayloadProof::Plonky2(Box::new(shrunk_main_pod_proof.clone())),
-            new_state: RawValue::from(new_state.commitment()),
+            new_state: new_state_raw,
+            op: op_raw,
         });
 
         println!("PayloadUpdate roundtrip");
@@ -308,7 +317,11 @@ mod tests {
         println!("Verify shrunk mainPod");
         let st = Statement::Custom(
             custom_predicate_ref,
-            vec![Value::from(new_state), Value::from(state)],
+            vec![
+                Value::from(new_state_raw),
+                Value::from(state_raw),
+                Value::from(op_raw),
+            ],
         );
         println!("st: {st:?}");
         let sts_hash = calculate_statements_hash(&[st.into()], &params);

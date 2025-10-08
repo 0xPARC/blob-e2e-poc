@@ -868,6 +868,10 @@ impl<'a> RevHelper<'a> {
         st_update: Statement,
         old_st_rev_sync: Statement,
     ) -> (Dictionary, Statement) {
+        println!("DBG old_rev: {:?}", old_rev.kvs());
+        println!("DBG op: {:?}", op.kvs());
+        println!("DBG st_update: {}", st_update);
+        println!("DBG old_st_rev_sync: {}", old_st_rev_sync);
         let name = String::try_from(op.get(&Key::from("name")).unwrap().typed()).unwrap();
         let st_none = Statement::None;
         let (new, sts) = match name.as_str() {
@@ -901,15 +905,20 @@ impl<'a> RevHelper<'a> {
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
+    use common::disk::{load_pod, store_pod};
     use pod2::{
-        backends::plonky2::mock::mainpod::MockProver,
+        // backends::plonky2::mock::mainpod::MockProver,
+        backends::plonky2::mainpod::Prover,
         frontend::{MainPod, MainPodBuilder},
         lang::PrettyPrint,
-        middleware::{MainPodProver, Params, VDSet},
+        middleware::{DEFAULT_VD_SET, MainPodProver, Params, VDSet},
     };
 
     use super::{Group::*, *};
 
+    #[allow(clippy::too_many_arguments)]
     fn update(
         params: &Params,
         vd_set: &VDSet,
@@ -938,6 +947,21 @@ mod tests {
         );
         state_pod.pod.verify().unwrap();
 
+        // FIXME: Unsuccessful attempt to reproduce the bug in the
+        // `ad_server::queue::handle_update_rev`.  But here it works...
+
+        // store & load
+        store_pod(Path::new("/tmp/"), "test_state_pod", &state_pod).unwrap();
+        let state_pod = load_pod(Path::new("/tmp/"), "test_state_pod").unwrap();
+
+        let st_update = state_pod.pod.pub_statements()[0].clone();
+        let arg2 = st_update.args()[2].literal().unwrap();
+        let op = if let TypedValue::Dictionary(op) = arg2.typed() {
+            op.clone()
+        } else {
+            panic!("Value not a Dictionary: {:?}", arg2)
+        };
+
         // Reverse State Pod
         let mut builder = MainPodBuilder::new(params, vd_set);
         builder.add_pod(state_pod);
@@ -949,7 +973,7 @@ mod tests {
         };
         let mut rev_helper = RevHelper::new(&mut builder, predicates, rev_predicates);
         let (rev_state, rev_st_update) =
-            rev_helper.st_rev_sync(rev_state, Dictionary::from(op), st_update, old_st_rev_sync);
+            rev_helper.st_rev_sync(rev_state, op, st_update, old_st_rev_sync);
         builder.reveal(&rev_st_update);
 
         let rev_state_pod = builder.prove(prover).unwrap();
@@ -966,13 +990,10 @@ mod tests {
     #[test]
     fn test_app() {
         env_logger::init();
-        let (vd_set, prover) = (&VDSet::new(8, &[]).unwrap(), &MockProver {});
+        // let (vd_set, prover) = (&VDSet::new(8, &[]).unwrap(), &MockProver {});
+        let (vd_set, prover) = (&*DEFAULT_VD_SET, &Prover {});
 
-        let params = Params {
-            max_custom_batch_size: 20,
-            max_custom_predicate_batches: 2,
-            ..Params::default()
-        };
+        let params = Params::default();
         let (state_predicates, rev_predicates) = build_predicates(&params);
 
         // Initial state

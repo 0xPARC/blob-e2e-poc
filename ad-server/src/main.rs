@@ -37,6 +37,8 @@ pub struct Config {
     pub rpc_url: String,
     // The path to the sqlite database (it will be a file)
     pub sqlite_path: String,
+    // The path to store pods
+    pub pods_path: String,
     // Ethereum private key to send txs
     pub priv_key: String,
     // The address that receives AD update via blobs
@@ -55,6 +57,7 @@ impl Config {
         Ok(Self {
             rpc_url: var("RPC_URL")?,
             sqlite_path: var("AD_SERVER_SQLITE_PATH")?,
+            pods_path: var("PODS_PATH")?,
             priv_key: var("PRIV_KEY")?,
             to_addr: Address::from_str(&var("TO_ADDR")?)?,
             tx_watch_timeout: u64::from_str(&var("TX_WATCH_TIMEOUT")?)?,

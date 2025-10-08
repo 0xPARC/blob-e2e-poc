@@ -1,3 +1,4 @@
+pub mod disk;
 pub mod payload;
 
 /// 2 options to prepare the POD proofs:
