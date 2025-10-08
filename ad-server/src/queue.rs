@@ -327,7 +327,7 @@ async fn handle_update_rev(ctx: Arc<Context>, req_id: Uuid, id: i64, num: i64) -
     // FIXME: This prove is failing with this error:
     // `anyhow::Error: Partition containing Wire(Wire { row: 48691, column: 43 }) was set twice with different values: 1 != 0`
     // So for now we return the error so that the queue doesn't panic.  Ideally we'd `unwrap()`
-    // adter `prove` inside the blocking task.
+    // after `prove` inside the blocking task.
     let rev_state_pod = task::spawn_blocking(move || builder.prove(&prover)).await??;
     println!("# rev_state_pod\n:{}", rev_state_pod);
     rev_state_pod.pod.verify().unwrap();
