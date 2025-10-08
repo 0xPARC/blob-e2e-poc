@@ -246,7 +246,8 @@ mod tests {
         let pod_config = PodConfig {
             params,
             vd_set: vd_set.clone(),
-            predicates: state_predicates,
+            state_predicates,
+            rev_predicates,
         };
 
         let (queue_tx, queue_rx) = mpsc::channel::<queue::Request>(8);

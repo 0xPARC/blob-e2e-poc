@@ -552,7 +552,7 @@ impl<'a> Helper<'a> {
     ) -> (Dictionary, Statement) {
         let empty_set = Set::new(DEPTH, HashSet::new()).unwrap();
         let mut user_groups = empty_set.clone();
-        user_groups.insert(&group).unwrap();
+        user_groups.insert(group).unwrap();
         let mut new_rev = old_rev.clone();
         new_rev
             .insert(user, &Value::from(user_groups.clone()))

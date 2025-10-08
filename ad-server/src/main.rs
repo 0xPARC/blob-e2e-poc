@@ -3,7 +3,7 @@ use std::{collections::HashMap, str::FromStr, sync::Arc};
 
 use alloy::primitives::Address;
 use anyhow::{Context as _, Result};
-use app::{Predicates, build_predicates};
+use app::{Predicates, RevPredicates, build_predicates};
 use common::{
     ProofType,
     shrink::{ShrunkMainPodBuild, ShrunkMainPodSetup},
@@ -67,7 +67,8 @@ impl Config {
 pub struct PodConfig {
     params: Params,
     vd_set: VDSet,
-    predicates: Predicates,
+    state_predicates: Predicates,
+    rev_predicates: RevPredicates,
 }
 
 pub struct Context {
@@ -138,7 +139,8 @@ async fn main() -> Result<()> {
     let pod_config = PodConfig {
         params,
         vd_set: vd_set.clone(),
-        predicates: state_predicates,
+        state_predicates,
+        rev_predicates,
     };
 
     let (queue_tx, queue_rx) = mpsc::channel::<queue::Request>(8);
