@@ -143,7 +143,7 @@ async fn main() -> Result<()> {
 
     if cfg.proof_type == ProofType::Groth16 {
         // initialize groth16 memory
-        common::groth::init();
+        common::groth::init()?;
     }
 
     let (queue_tx, queue_rx) = mpsc::channel::<queue::Request>(8);
