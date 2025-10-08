@@ -146,6 +146,11 @@ async fn main() -> Result<()> {
         rev_predicates,
     };
 
+    if cfg.proof_type == ProofType::Groth16 {
+        // initialize groth16 memory
+        common::groth::init()?;
+    }
+
     let (queue_tx, queue_rx) = mpsc::channel::<queue::Request>(8);
     let ctx = Arc::new(Context::new(
         cfg,

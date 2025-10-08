@@ -230,7 +230,8 @@ async fn handle_update(ctx: Arc<Context>, req_id: Uuid, id: i64, op: Op) -> Resu
             PayloadProof::Plonky2(Box::new(compressed_proof))
         }
         ProofType::Groth16 => {
-            let compressed_proof = task::spawn_blocking(move || groth::prove(pod).unwrap()).await?;
+            let (compressed_proof, _) =
+                task::spawn_blocking(move || groth::prove(pod).unwrap()).await?;
             PayloadProof::Groth16(compressed_proof)
         }
     };

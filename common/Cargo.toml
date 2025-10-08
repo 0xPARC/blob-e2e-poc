@@ -16,7 +16,7 @@ tracing = { workspace = true }
 tracing-log = { workspace = true }
 serde_json = { workspace = true }
 
-pod2_onchain = { git = "https://github.com/0xPARC/pod2-onchain.git", rev = "72468002f9f98460c4c513ae2c6412fddb6a41e7", default-features=false, features = ["disk_cache"]}
+pod2_onchain = { git = "https://github.com/0xPARC/pod2-onchain.git", rev = "490b98fe9f94b574e87d687bdb014ce6fc36cafc", default-features=false, features = ["disk_cache"]}
 
 [dev-dependencies]
 app = { path = "../app" }

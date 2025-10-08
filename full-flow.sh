@@ -17,24 +17,16 @@ DB2_PATH=$(sed -n 's/^SYNCHRONIZER_SQLITE_PATH="\([^"]*\)"/\1/p' .env)
 rm -f $DB1_PATH
 rm -f $DB2_PATH
 
-# echo -e "build go binary"
-# git clone https://github.com/0xPARC/pod2-onchain.git tmp/pod2-onchain
-# cd tmp/pod2-onchain
-# git checkout fix-private-witness # TODO rm once branch merged (TMP)
-# go build
-# mv ./pod2-onchain ../../pod2-onchain
-# cd -
-# 
 # # if the sample pod proof does not exist, create it
-# if [ ! -d "tmp/podproof" ]; then
-# 	echo -e "generate a first pod proof to have a sample for the Groth16 verifier"
+# if [ ! -d "tmp/plonky2-proof" ]; then
+# 	echo -e "generate a first POD proof to have a sample for the Groth16 verifier"
 # 	cargo test --release -p common gen_sample_pod_proof -- --nocapture --ignored
 # fi
-# 
+
 # # if the trusted setup does not exist, create it
-# if [ ! -d "tmp/grothartifacts" ]; then
+# if [ ! -d "tmp/groth-artifacts" ]; then
 # 	echo -e "generate Groth16 trusted setup, using the POD's plonky2 sample"
-# 	./pod2-onchain -t -i tmp/podproof -o tmp/grothartifacts
+# 	cargo test --release -p common gen_trusted_setup -- --nocapture --ignored
 # fi
 
 # set new variable to use tmux in a new env

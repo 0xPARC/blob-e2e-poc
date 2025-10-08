@@ -15,24 +15,16 @@
     - queries the AD server to create a new counter, increase it, and fetches the latest state from the Synchronizer
 
 
-## API endpoints
+## Usage
+### Requirements
+Required software: [curl](https://curl.se), [git](https://git-scm.com), [rust](https://rust-lang.org), [go](https://go.dev), [tmux](https://github.com/tmux/tmux), [jq](https://github.com/jqlang/jq).
 
-### AD Server
+Copy the `.env.default` file into `.env`, and set the `PRIV_KEY` and `RPC_URL` values.
 
-```
-# Init a new counter
-curl -X POST http://0.0.0.0:8000/counter
+### Run
+To run the artifacts generation, and the AD-Server & Synchronizer, together with a bash script that interacts with both, run the following command:
+- `./full-flow.sh`
 
-# Update a counter
-curl --json '5' http://0.0.0.0:8000/counter/2
-
-# Get counter state
-curl http://0.0.0.0:8000/counter/2
-```
-
-### Synchronizer
-
-```
-# Get AD state
-curl http://0.0.0.0:8000/ad_state/0x123...
-```
+Alternatively can run both services manually, (but take in mind that some previous steps are needed, which can be found at the `full-flow.sh` script):
+- AD-Server: `RUST_LOG=ad_server=debug cargo run --release -p ad-server`
+- Synchronizer: `RUST_LOG=synchronizer=debug cargo run --release -p synchronizer`
