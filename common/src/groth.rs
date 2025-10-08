@@ -1,37 +1,36 @@
-use std::{path::Path, process::Command, time::Instant};
+use std::{path::Path, time::Instant};
 
 use anyhow::{Result, anyhow};
-use pod2_onchain::{prove_pod, store_files};
 use tracing::info;
 
-const BIN_PATH: &str = "../pod2-onchain";
-const PATH: &str = "../tmp";
+const INPUT_PATH: &str = "../tmp/plonky2-proof";
+const OUTPUT_PATH: &str = "../tmp/groth-artifacts";
+
+/// initializes the groth16 prover memory, loading the artifacts. This method
+/// must be called before the `prove` method.
+pub fn init() {
+    pod2_onchain::init(INPUT_PATH, OUTPUT_PATH);
+}
 
 /// computes the one extra recursive proof from the given MainPod's proof in
 /// order to shrink it, together with using the bn254's poseidon variant in the
 /// configuration of the plonky2 prover, in order to make it compatible with the
-/// Groth16 circuit
-pub fn prove(pod: pod2::frontend::MainPod) -> Result<Vec<u8>> {
+/// Groth16 circuit.
+/// Returns the Groth16 proof, and the Public Inputs, both in their byte-array
+/// representation.
+pub fn prove(pod: pod2::frontend::MainPod) -> Result<(Vec<u8>, Vec<u8>)> {
     let start = Instant::now();
     // generate new plonky2 proof (groth16's friendly kind) from POD's proof
-    let (verifier_data, common_circuit_data, proof_with_pis) = prove_pod(pod)?;
+    let (_, _, proof_with_pis) = pod2_onchain::prove_pod(pod)?;
     info!(
         "[TIME] plonky2 proof (groth16-friendly) took: {:?}",
         start.elapsed()
     );
 
-    // store the files
-    store_files(
-        &Path::new(PATH).join("podproof"),
-        verifier_data.verifier_only,
-        common_circuit_data,
-        proof_with_pis,
-    )?;
-
     // check that the trusted setup & r1cs files exist
-    let pk_path = Path::new(PATH).join("grothartifacts/proving.key");
-    let vk_path = Path::new(PATH).join("grothartifacts/verifying.key");
-    let r1cs_path = Path::new(PATH).join("grothartifacts/r1cs");
+    let pk_path = Path::new(&OUTPUT_PATH).join("proving.key");
+    let vk_path = Path::new(&OUTPUT_PATH).join("verifying.key");
+    let r1cs_path = Path::new(&OUTPUT_PATH).join("r1cs");
     if !pk_path.exists() || !vk_path.exists() || !r1cs_path.exists() {
         return Err(anyhow!(
             "not found: pk, vk, r1cs. Path:\n  pk: {:?}\n  vk: {:?},\n  r1cs: {:?}",
@@ -41,77 +40,11 @@ pub fn prove(pod: pod2::frontend::MainPod) -> Result<Vec<u8>> {
         ));
     }
 
-    // assuming that the trusted setup & r1cs have been already generated,
-    // generate the Groth16 proof
-    gen_groth16_proof()?;
+    // assuming that the trusted setup & r1cs are in place, generate the Groth16
+    // proof
+    let (g16_proof, g16_pub_inp) = pod2_onchain::groth16_prove(proof_with_pis)?;
 
-    // read proof from file and return it
-    let proof_path = Path::new(PATH).join("grothartifacts/proof.proof");
-    if !proof_path.exists() {
-        return Err(anyhow!("groth16 proof not found. Path: {:?}", proof_path));
-    }
-    let proof_bytes = std::fs::read(proof_path)?;
-
-    Ok(proof_bytes)
-}
-
-#[allow(dead_code)]
-fn gen_groth16_ts() -> Result<()> {
-    groth16_cli(vec![
-        "-t".to_string(),
-        "-i".to_string(),
-        format!("{}/podproof", PATH),
-        "-o".to_string(),
-        format!("{}/grothartifacts", PATH),
-    ])
-}
-
-fn gen_groth16_proof() -> Result<()> {
-    groth16_cli(vec![
-        "-p".to_string(),
-        "-i".to_string(),
-        format!("{}/podproof", PATH),
-        "-o".to_string(),
-        format!("{}/grothartifacts", PATH),
-    ])
-}
-
-#[allow(dead_code)]
-fn gen_groth16_verify() -> Result<()> {
-    groth16_cli(vec![
-        "-v".to_string(),
-        "-o".to_string(),
-        format!("{}/grothartifacts", PATH),
-    ])
-}
-
-fn groth16_cli(args: Vec<String>) -> Result<()> {
-    println!("calling pod2-onchain with args: {args:?}");
-
-    let bin_path = Path::new(BIN_PATH);
-    dbg!(bin_path.exists());
-    if !bin_path.exists() {
-        return Err(anyhow!("binary not found at path {:?}", bin_path));
-    }
-    dbg!(&bin_path);
-
-    let output = Command::new(BIN_PATH)
-        .args(args)
-        .output()
-        .expect("failed to execute process");
-    println!("status: {}", output.status);
-    println!("stdout: {}", String::from_utf8_lossy(&output.stdout));
-    println!("stderr: {}", String::from_utf8_lossy(&output.stderr));
-    if let Some(code) = output.status.code() {
-        match code {
-            0 => {}
-            _ => return Err(anyhow!("Exited with code: {}", code)),
-        }
-    } else {
-        println!("Process terminated by signal");
-    }
-
-    Ok(())
+    Ok((g16_proof, g16_pub_inp))
 }
 
 #[cfg(test)]
@@ -160,15 +93,15 @@ mod tests {
         );
 
         // generate new plonky2 proof (groth16's friendly kind) from POD's proof
-        let (verifier_data, common_circuit_data, proof_with_pis) = prove_pod(pod)?;
+        let (verifier_data, common_circuit_data, proof_with_pis) = pod2_onchain::prove_pod(pod)?;
         info!(
             "[TIME] plonky2 proof (groth16-friendly) took: {:?}",
             start.elapsed()
         );
 
         // store the files
-        store_files(
-            &Path::new(PATH).join("podproof"),
+        pod2_onchain::pod::store_files(
+            &Path::new(INPUT_PATH),
             verifier_data.verifier_only,
             common_circuit_data,
             proof_with_pis,
@@ -188,8 +121,13 @@ mod tests {
             start.elapsed()
         );
 
+        // initialize groth16 memory
+        init();
+
         // compute its plonky2 & groth16 proof
-        let _ = prove(pod)?;
+        let (g16_proof, g16_pub_inp) = prove(pod)?;
+        let v = pod2_onchain::groth16_verify(g16_proof, g16_pub_inp)?;
+        dbg!(&v);
 
         Ok(())
     }
