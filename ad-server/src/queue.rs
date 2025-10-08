@@ -15,10 +15,7 @@ use pod2::{
     backends::plonky2::{mainpod::Prover, primitives::merkletree::MerkleClaimAndProof},
     dict,
     frontend::MainPodBuilder,
-    middleware::{
-        Hash, RawValue, Statement, TypedValue, Value,
-        containers::{self, Dictionary},
-    },
+    middleware::{Hash, RawValue, Statement, TypedValue, Value, containers::Dictionary},
 };
 use serde::{Deserialize, Serialize};
 use tokio::{sync::mpsc::Receiver, task};
