@@ -112,6 +112,29 @@ mod tests {
 
     #[ignore]
     #[test]
+    fn gen_trusted_setup() -> Result<()> {
+        // if plonky2 groth16-friendly proof does not exist yet, generate it
+        if !Path::new(INPUT_PATH).is_dir() {
+            println!("generating plonky2 groth16-friendly proof");
+            pod2_onchain::pod::sample_plonky2_g16_friendly_proof(INPUT_PATH)?;
+        } else {
+            println!("plonky2 groth16-friendly proof already exists, skipping generation");
+        }
+
+        // if trusted setup does not exist yet, generate it
+        if !Path::new(OUTPUT_PATH).is_dir() {
+            println!("generating groth16's trusted setup");
+            let result = pod2_onchain::trusted_setup(INPUT_PATH, OUTPUT_PATH);
+            println!("trusted_setup result: {}", result);
+        } else {
+            println!("trusted setup already exists, skipping generation");
+        }
+
+        Ok(())
+    }
+
+    #[ignore]
+    #[test]
     fn test_prove_method() -> Result<()> {
         // obtain the pod to be proven
         let start = Instant::now();

@@ -3770,7 +3770,7 @@ dependencies = [
 [[package]]
 name = "pod2_onchain"
 version = "0.1.0"
-source = "git+https://github.com/0xPARC/pod2-onchain.git?rev=80209c226b51b15a060ed1de4236af476acdbe23#80209c226b51b15a060ed1de4236af476acdbe23"
+source = "git+https://github.com/0xPARC/pod2-onchain.git?rev=490b98fe9f94b574e87d687bdb014ce6fc36cafc#490b98fe9f94b574e87d687bdb014ce6fc36cafc"
 dependencies = [
  "anyhow",
  "bindgen",

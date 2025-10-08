@@ -15,7 +15,7 @@ itertools = "0.14.0"
 tracing = { workspace = true }
 tracing-log = { workspace = true }
 
-pod2_onchain = { git = "https://github.com/0xPARC/pod2-onchain.git", rev = "80209c226b51b15a060ed1de4236af476acdbe23", default-features=false, features = ["disk_cache"]}
+pod2_onchain = { git = "https://github.com/0xPARC/pod2-onchain.git", rev = "490b98fe9f94b574e87d687bdb014ce6fc36cafc", default-features=false, features = ["disk_cache"]}
 
 [dev-dependencies]
 app = { path = "../app" }

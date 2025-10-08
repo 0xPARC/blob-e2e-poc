@@ -22,9 +22,9 @@ Required software: [curl](https://curl.se), [git](https://git-scm.com), [rust](h
 Copy the `.env.default` file into `.env`, and set the `PRIV_KEY` and `RPC_URL` values.
 
 ### Run
-To run the AD-Server & Synchronizer, together with a bash script that interacts with both, run the following command:
+To run the artifacts generation, and the AD-Server & Synchronizer, together with a bash script that interacts with both, run the following command:
 - `./full-flow.sh`
 
-To run them manually:
+Alternatively can run both services manually, (but take in mind that some previous steps are needed, which can be found at the `full-flow.sh` script):
 - AD-Server: `RUST_LOG=ad_server=debug cargo run --release -p ad-server`
 - Synchronizer: `RUST_LOG=synchronizer=debug cargo run --release -p synchronizer`
