@@ -784,6 +784,7 @@ impl Node {
             vec![
                 Value::from(payload.new_state),
                 Value::from(ad_update_last.state.0),
+                Value::from(payload.op),
             ],
         );
         let sts_hash = calculate_statements_hash(&[st.into()], &self.params);
@@ -817,7 +818,8 @@ impl Node {
             ad_id = payload.id.encode_hex::<String>(),
             num = ad_update.num,
             old_state = ad_update_last.state.0.encode_hex::<String>(),
-            new_state = payload.new_state.encode_hex::<String>()
+            new_state = payload.new_state.encode_hex::<String>(),
+            op = payload.op.encode_hex::<String>()
         );
         Ok(())
     }

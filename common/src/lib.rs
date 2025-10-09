@@ -1,3 +1,4 @@
+pub mod disk;
 pub mod payload;
 
 /// 2 options to prepare the POD proofs:
@@ -17,6 +18,7 @@ use std::{io, str::FromStr, time::Duration};
 
 use anyhow::{Result, anyhow};
 use log::LevelFilter;
+use pod2::middleware::{Value, containers};
 use sqlx::{ConnectOptions, SqlitePool, sqlite::SqliteConnectOptions};
 
 /// struct used to convert sqlx errors to warp errors
@@ -80,5 +82,12 @@ impl ProofType {
             ProofType::Plonky2 => 0u8,
             ProofType::Groth16 => 1u8,
         }
+    }
+}
+
+pub fn set_from_value(v: &Value) -> Result<containers::Set> {
+    match v.typed() {
+        pod2::middleware::TypedValue::Set(s) => Ok(s.clone()),
+        _ => Err(anyhow!("Invalid set")),
     }
 }

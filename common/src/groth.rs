@@ -63,17 +63,17 @@ mod tests {
     fn compute_pod_proof() -> Result<pod2::frontend::MainPod> {
         let params = Params::default();
         let vd_set = &*DEFAULT_VD_SET;
-        let predicates = app::build_predicates(&params);
+        let (state_predicates, _) = app::build_predicates(&params);
 
         let mut builder = MainPodBuilder::new(&params, vd_set);
-        let mut helper = app::Helper::new(&mut builder, &predicates);
+        let mut helper = app::Helper::new(&mut builder, &state_predicates);
 
         let initial_state = Dictionary::new(
             params.max_depth_mt_containers,
             std::collections::HashMap::new(),
         )
         .unwrap();
-        let (state, _st_update) = helper.st_update(initial_state.clone(), app::Op::Init.into());
+        let (state, _st_update) = helper.st_update(initial_state.clone(), app::Op::Init.into())?;
 
         let op = app::Op::Add {
             group: app::Group::Red,
@@ -81,7 +81,7 @@ mod tests {
         };
         let op = Dictionary::from(op);
 
-        let (_new_state, st_update) = helper.st_update(state.clone(), op);
+        let (_new_state, st_update) = helper.st_update(state.clone(), op)?;
         builder.reveal(&st_update);
 
         let prover = Prover {};

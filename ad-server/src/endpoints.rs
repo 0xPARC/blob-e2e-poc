@@ -241,12 +241,13 @@ mod tests {
         println!("Prebuilding circuits to calculate vd_set...");
         let vd_set = &*DEFAULT_VD_SET;
         println!("vd_set calculation complete");
-        let predicates = app::build_predicates(&params);
+        let (state_predicates, rev_predicates) = app::build_predicates(&params);
         let shrunk_main_pod_build = ShrunkMainPodSetup::new(&params).build()?;
         let pod_config = PodConfig {
             params,
             vd_set: vd_set.clone(),
-            predicates,
+            state_predicates,
+            rev_predicates,
         };
 
         let (queue_tx, queue_rx) = mpsc::channel::<queue::Request>(8);

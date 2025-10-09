@@ -919,7 +919,10 @@ checksum = "b0674a1ddeecb70197781e945de4b3b8ffb61fa939a5597bcf48503737663100"
 name = "app"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "common",
  "env_logger",
+ "hex",
  "pod2",
  "serde",
 ]
@@ -1421,6 +1424,7 @@ dependencies = [
  "plonky2",
  "pod2",
  "pod2_onchain",
+ "serde_json",
  "sqlx",
  "tracing",
  "tracing-log 0.1.4",
