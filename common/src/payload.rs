@@ -55,7 +55,7 @@ pub fn read_custom_predicate_ref(bytes: &mut impl Read) -> Result<CustomPredicat
     })
 }
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 #[allow(clippy::large_enum_variant)]
 pub enum Payload {
     Create(PayloadCreate),
@@ -112,7 +112,7 @@ impl Payload {
     }
 }
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PayloadCreate {
     pub id: Hash,
     pub custom_predicate_ref: CustomPredicateRef,
@@ -139,7 +139,7 @@ impl PayloadCreate {
     }
 }
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PayloadProof {
     Plonky2(Box<CompressedProof<F, C, D>>),
     Groth16(Vec<u8>),
@@ -188,7 +188,7 @@ impl PayloadProof {
                 let len_bytes: [u8; 8] = bytes[0..8].try_into()?;
                 let len: usize = u64::from_le_bytes(len_bytes) as usize;
                 // return the rest of bytes of the Groth16 proof
-                (PayloadProof::Groth16(bytes[8..8 + len].to_vec()), len)
+                (PayloadProof::Groth16(bytes[8..8 + len].to_vec()), 8 + len)
             }
         };
 
@@ -198,7 +198,7 @@ impl PayloadProof {
     }
 }
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PayloadUpdate {
     pub id: Hash,
     pub proof: PayloadProof,
@@ -249,7 +249,9 @@ mod tests {
     use crate::shrink::{ShrunkMainPodSetup, shrink_compress_pod};
 
     #[test]
-    fn test_payload_roundtrip() {
+    fn test_payload_roundtrip() -> Result<()> {
+        let test_groth = false; // set to false by default since it takes much longer
+
         let params = Params::default();
         println!("ShrunkMainPod setup");
         let shrunk_main_pod_build = ShrunkMainPodSetup::new(&params).build().unwrap();
@@ -297,7 +299,8 @@ mod tests {
         pod.pod.verify().unwrap();
 
         println!("MainPod shrink & compress");
-        let shrunk_main_pod_proof = shrink_compress_pod(&shrunk_main_pod_build, pod).unwrap();
+        let shrunk_main_pod_proof =
+            shrink_compress_pod(&shrunk_main_pod_build, pod.clone()).unwrap();
 
         let payload_update = Payload::Update(PayloadUpdate {
             id,
@@ -305,6 +308,25 @@ mod tests {
             new_state: new_state_raw,
             op: op_raw,
         });
+
+        let (g16_payload_update, g16_payload_update_bytes) = if test_groth {
+            // load groth artifacts
+            crate::groth::init()?;
+
+            let (g16_proof, g16_pub_inp) = crate::groth::prove(pod)?;
+            // sanity check: verify proof
+            pod2_onchain::groth16_verify(g16_proof.clone(), g16_pub_inp)?;
+
+            let g16_payload_update = Payload::Update(PayloadUpdate {
+                id,
+                proof: PayloadProof::Groth16(g16_proof),
+                new_state: new_state_raw,
+                op: op_raw,
+            });
+            (g16_payload_update.clone(), g16_payload_update.to_bytes())
+        } else {
+            (payload_update.clone(), vec![])
+        };
 
         println!("PayloadUpdate roundtrip");
         let payload_update_bytes = payload_update.to_bytes();
@@ -324,7 +346,7 @@ mod tests {
             ],
         );
         println!("st: {st:?}");
-        let sts_hash = calculate_statements_hash(&[st.into()], &params);
+        let sts_hash = calculate_statements_hash(&[st.clone().into()], &params);
         let public_inputs = [sts_hash.0, vds_root.0].concat();
         let proof_with_pis = CompressedProofWithPublicInputs {
             proof: shrunk_main_pod_proof,
@@ -340,5 +362,32 @@ mod tests {
             )
             .unwrap();
         shrunk_main_pod_build.circuit_data.verify(proof).unwrap();
+
+        if test_groth {
+            let g16_payload_update_decoded =
+                // PayloadUpdate::from_bytes(&g16_payload_update_bytes, common_data).unwrap();
+                match Payload::from_bytes(&g16_payload_update_bytes, common_data).unwrap() {
+                    Payload::Update(p) => p,
+                    _ => return Err(anyhow!("expected Payload::Update")),
+                };
+            assert_eq!(
+                g16_payload_update,
+                Payload::Update(g16_payload_update_decoded.clone())
+            );
+
+            // prepare the public inputs for the groth16 verification
+            let pub_inp = pod2_onchain::prepare_public_inputs(&params, vds_root, &[st])?;
+            // encode it as big-endian bytes compatible with Gnark
+            let pub_inp_bytes = pod2_onchain::encode_public_inputs_gnark(pub_inp);
+
+            let proof_bytes = match g16_payload_update_decoded.proof {
+                PayloadProof::Groth16(b) => b,
+                _ => return Err(anyhow!("should be a PayloadProof::Groth16")),
+            };
+            // verify groth16 proof from the payload
+            pod2_onchain::groth16_verify(proof_bytes, pub_inp_bytes)?;
+        }
+
+        Ok(())
     }
 }

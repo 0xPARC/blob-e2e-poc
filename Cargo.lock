@@ -3774,7 +3774,7 @@ dependencies = [
 [[package]]
 name = "pod2_onchain"
 version = "0.1.0"
-source = "git+https://github.com/0xPARC/pod2-onchain.git?rev=490b98fe9f94b574e87d687bdb014ce6fc36cafc#490b98fe9f94b574e87d687bdb014ce6fc36cafc"
+source = "git+https://github.com/0xPARC/pod2-onchain.git?rev=0df0e99ddf37842eb8395ae06ab92a8d79b76cfb#0df0e99ddf37842eb8395ae06ab92a8d79b76cfb"
 dependencies = [
  "anyhow",
  "bindgen",
@@ -5136,6 +5136,7 @@ dependencies = [
  "minicbor-serde 0.6.1",
  "plonky2",
  "pod2",
+ "pod2_onchain",
  "reqwest 0.11.27",
  "reqwest-eventsource",
  "serde",

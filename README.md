@@ -26,5 +26,5 @@ To run the artifacts generation, and the AD-Server & Synchronizer, together with
 - `./full-flow.sh`
 
 Alternatively can run both services manually, (but take in mind that some previous steps are needed, which can be found at the `full-flow.sh` script):
-- AD-Server: `RUST_LOG=ad_server=debug cargo run --release -p ad-server`
-- Synchronizer: `RUST_LOG=synchronizer=debug cargo run --release -p synchronizer`
+- AD-Server: `RUST_LOG=ad_server=debug,common=debug cargo run --release -p ad-server`
+- Synchronizer: `RUST_LOG=synchronizer=debug,common=debug cargo run --release -p synchronizer`

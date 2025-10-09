@@ -81,14 +81,14 @@ mod tests {
     //     Ok(pod)
     // }
     // #[test]
-    // fn test_arnau_proof_blob() -> Result<()> {
-    //     // Arnau's blob string. Taken from https://sepolia.etherscan.io/tx/0xce74df829b8e7622f0b077e9f8a4caf002f975740ef6f155f02679f0719f4a33#blobs
-    //     let arnau_blob_str = &std::fs::read_to_string("./arnau_blob_str")?;
+    // fn test_file_proof_blob() -> Result<()> {
+    //     // blob string. Taken from https://sepolia.etherscan.io/tx/0xce74df829b8e7622f0b077e9f8a4caf002f975740ef6f155f02679f0719f4a33#blobs
+    //     let file_blob_str = &std::fs::read_to_string("./file_blob_str")?;
 
     //     // Extract bytes from blob
-    //     let half_len = arnau_blob_str.len() / 2;
+    //     let half_len = file_blob_str.len() / 2;
     //     let blob: Vec<u8> = (0..half_len)
-    //         .map(|i| u8::from_str_radix(&arnau_blob_str[2 * i..2 * i + 2], 16))
+    //         .map(|i| u8::from_str_radix(&file_blob_str[2 * i..2 * i + 2], 16))
     //         .collect::<Result<_, _>>()?;
     //     let proof_bytes = bytes_from_simple_blob(&blob)?;
 
