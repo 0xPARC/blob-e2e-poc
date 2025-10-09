@@ -41,7 +41,7 @@ $tmux split-window -t 0 -v
 $tmux send-keys -t fullflow:0.0 'cd ad-server && RUST_LOG=ad_server=debug,common=debug cargo run --release -p ad-server' C-m
 
 # run the Synchronizer server
-$tmux send-keys -t fullflow:0.1 'RUST_LOG=synchronizer=debug,common=debug cargo run --release -p synchronizer' C-m
+$tmux send-keys -t fullflow:0.1 'cd synchronizer && RUST_LOG=synchronizer=debug,common=debug cargo run --release -p synchronizer' C-m
 
 # leave ready the full-flow script command without executing it yet
 $tmux send-keys -t fullflow:0.2 'echo "INSTRUCTIONS: once the first two panels are already running the servers (AD & Synchronizer), execute the following command to run the integration test:"' C-m

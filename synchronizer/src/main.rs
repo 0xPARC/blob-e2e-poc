@@ -479,7 +479,7 @@ impl Node {
             }
             PayloadProof::Groth16(g16_proof) => {
                 let pub_inp =
-                    pod2_onchain::prepare_public_inputs(&self.params, ad.vds_root.0, &[st.into()])?;
+                    pod2_onchain::prepare_public_inputs(&self.params, ad.vds_root.0, &[st])?;
                 // encode it as big-endian bytes compatible with Gnark
                 let pub_inp_bytes = pod2_onchain::encode_public_inputs_gnark(pub_inp);
 
