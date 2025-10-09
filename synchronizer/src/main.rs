@@ -24,7 +24,7 @@ use anyhow::{Context, Result, anyhow};
 use backoff::ExponentialBackoffBuilder;
 use chrono::{DateTime, Utc};
 use common::{
-    load_dotenv,
+    ProofType, load_dotenv,
     payload::{Payload, PayloadCreate, PayloadProof, PayloadUpdate},
     shrink::ShrunkMainPodSetup,
 };
@@ -37,7 +37,9 @@ use pod2::{
     },
     cache,
     cache::CacheEntry,
-    middleware::{CommonCircuitData, EMPTY_VALUE, Params, Statement, Value, VerifierCircuitData},
+    middleware::{
+        CommonCircuitData, EMPTY_VALUE, F, Params, Statement, Value, VerifierCircuitData,
+    },
 };
 use sqlx::{SqlitePool, migrate::MigrateDatabase, sqlite::Sqlite};
 use synchronizer::{
@@ -89,6 +91,9 @@ pub struct Config {
     pub to_addr: Address,
     // Max Beacon API + RPC requests per second
     pub request_rate: u64,
+    // set the proving system used to generate the proofs being sent to ethereum
+    //   options: plonky2 / groth16
+    pub proof_type: ProofType,
 }
 
 impl Config {
@@ -104,6 +109,7 @@ impl Config {
             ad_genesis_slot: u32::from_str(&var("AD_GENESIS_SLOT")?)?,
             to_addr: Address::from_str(&var("TO_ADDR")?)?,
             request_rate: u64::from_str(&var("REQUEST_RATE")?)?,
+            proof_type: ProofType::from_str(&var("PROOF_TYPE")?)?,
         })
     }
 }
@@ -121,15 +127,12 @@ struct Node {
 }
 
 impl Node {
-    async fn init_db(db_pool: &SqlitePool) -> Result<()> {
-        init_db(db_pool).await
-    }
     async fn new(cfg: Config) -> Result<Self> {
         if !Sqlite::database_exists(&cfg.sqlite_path).await? {
             Sqlite::create_database(&cfg.sqlite_path).await?;
         }
         let db_pool = common::db_connection(&cfg.sqlite_path).await?;
-        Self::init_db(&db_pool).await?;
+        init_db(&db_pool).await?;
 
         let http_cli = reqwest::Client::builder()
             .timeout(Duration::from_secs(8))
@@ -458,23 +461,31 @@ impl Node {
                 Value::from(payload.op),
             ],
         );
-        let sts_hash = calculate_statements_hash(&[st.into()], &self.params);
-        let public_inputs = [sts_hash.0, ad.vds_root.0.0].concat();
-        let plonky2_compressed_proof = match payload.proof {
-            PayloadProof::Plonky2(p) => p,
-            _ => return Err(anyhow!("unsupported proof type")),
+        let sts_hash = calculate_statements_hash(&[st.clone().into()], &self.params);
+        let public_inputs: Vec<F> = [sts_hash.0, ad.vds_root.0.0].concat();
+        match payload.proof {
+            PayloadProof::Plonky2(compressed_proof) => {
+                let proof_with_pis = CompressedProofWithPublicInputs {
+                    proof: *compressed_proof,
+                    public_inputs,
+                };
+                let proof = proof_with_pis
+                    .decompress(
+                        &self.verifier_circuit_data.verifier_only.circuit_digest,
+                        &self.common_circuit_data,
+                    )
+                    .context("CompressedProofWithPublicInputs::decompress")?;
+                self.verifier_circuit_data.verify(proof)?;
+            }
+            PayloadProof::Groth16(g16_proof) => {
+                let pub_inp =
+                    pod2_onchain::prepare_public_inputs(&self.params, ad.vds_root.0, &[st.into()])?;
+                // encode it as big-endian bytes compatible with Gnark
+                let pub_inp_bytes = pod2_onchain::encode_public_inputs_gnark(pub_inp);
+
+                pod2_onchain::groth16_verify(g16_proof, pub_inp_bytes)?;
+            }
         };
-        let proof_with_pis = CompressedProofWithPublicInputs {
-            proof: *plonky2_compressed_proof,
-            public_inputs,
-        };
-        let proof = proof_with_pis
-            .decompress(
-                &self.verifier_circuit_data.verifier_only.circuit_digest,
-                &self.common_circuit_data,
-            )
-            .context("CompressedProofWithPublicInputs::decompress")?;
-        self.verifier_circuit_data.verify(proof)?;
 
         let blob_versioned_hash = kzg_to_versioned_hash(blob.kzg_commitment.as_ref()).0;
         let ad_update = tables::AdUpdate {
@@ -509,6 +520,11 @@ async fn main() -> Result<()> {
     load_dotenv()?;
     let cfg = Config::from_env()?;
     info!(?cfg, "Loaded config");
+
+    if cfg.proof_type == ProofType::Groth16 {
+        // initialize groth16 memory with the vk
+        common::groth::load_vk()?;
+    }
 
     let node = Node::new(cfg).await?;
 

@@ -148,8 +148,8 @@ async fn main() -> Result<()> {
 
     if cfg.proof_type == ProofType::Groth16 {
         // initialize groth16 memory
-        info!(
-            "loading Groth16 artifacts, please wait till the pk & vk are loaded (>30s) and the server is running"
+        println!(
+            "WARNING: loading Groth16 artifacts, please wait till the pk & vk are loaded (>30s) and the server is running"
         );
         common::groth::init()?;
     }
