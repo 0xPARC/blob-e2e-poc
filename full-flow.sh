@@ -17,17 +17,17 @@ DB2_PATH=$(sed -n 's/^SYNCHRONIZER_SQLITE_PATH="\([^"]*\)"/\1/p' .env)
 rm -f $DB1_PATH
 rm -f $DB2_PATH
 
-# # if the sample pod proof does not exist, create it
-# if [ ! -d "tmp/plonky2-proof" ]; then
-# 	echo -e "generate a first POD proof to have a sample for the Groth16 verifier"
-# 	cargo test --release -p common gen_sample_pod_proof -- --nocapture --ignored
-# fi
+# if the sample pod proof does not exist, create it
+if [ ! -d "tmp/plonky2-proof" ]; then
+	echo -e "generate a first POD proof to have a sample for the Groth16 verifier"
+	cargo test --release -p common gen_sample_pod_proof -- --nocapture --ignored
+fi
 
-# # if the trusted setup does not exist, create it
-# if [ ! -d "tmp/groth-artifacts" ]; then
-# 	echo -e "generate Groth16 trusted setup, using the POD's plonky2 sample"
-# 	cargo test --release -p common gen_trusted_setup -- --nocapture --ignored
-# fi
+# if the trusted setup does not exist, create it
+if [ ! -d "tmp/groth-artifacts" ]; then
+	echo -e "generate Groth16 trusted setup, using the POD's plonky2 sample"
+	cargo test --release -p common gen_trusted_setup -- --nocapture --ignored
+fi
 
 # set new variable to use tmux in a new env
 tmux="tmux -L ad-demo -f /dev/null"
