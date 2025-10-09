@@ -28,3 +28,7 @@ pub fn load_pod(path: &Path, name: &str) -> Result<MainPod> {
     let pod: MainPod = serde_json::from_slice(&pod_json)?;
     Ok(pod)
 }
+
+pub fn rev_membership_list_pod_file_name(id: i64, num: i64) -> String {
+    format!("{id:08}-{num:08}-rev_membership_list")
+}

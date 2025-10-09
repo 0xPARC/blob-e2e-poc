@@ -1,11 +1,11 @@
-use std::{collections::HashMap, path::Path, str::FromStr, sync::Arc};
+use std::{path::Path, sync::Arc};
 
 use alloy::primitives::TxHash;
-use anyhow::{Result, anyhow};
-use app::{Group, Helper, Op, RevHelper};
+use anyhow::Result;
+use app::{Helper, Op, RevHelper};
 use common::{
     ProofType,
-    disk::{load_pod, store_pod},
+    disk::{load_pod, rev_membership_list_pod_file_name, store_pod},
     groth,
     payload::{Payload, PayloadCreate, PayloadProof, PayloadUpdate},
     set_from_value,
@@ -15,7 +15,10 @@ use pod2::{
     backends::plonky2::{mainpod::Prover, primitives::merkletree::MerkleClaimAndProof},
     dict,
     frontend::MainPodBuilder,
-    middleware::{Hash, RawValue, Statement, TypedValue, Value, containers::Dictionary},
+    middleware::{
+        Hash, RawValue, Statement, TypedValue, Value,
+        containers::{Dictionary, Set},
+    },
 };
 use serde::{Deserialize, Serialize};
 use tokio::{sync::mpsc::Receiver, task};
@@ -29,7 +32,7 @@ pub enum State {
     Create(StateCreate),
     Update(StateUpdate),
     UpdateRev(StateUpdateRev),
-    Query(StateQuery),
+    Query(Box<StateQuery>),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -61,9 +64,7 @@ pub enum StateUpdateRev {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum StateQuery {
     Pending,
-    Complete {
-        result: HashMap<Group, MerkleClaimAndProof>,
-    },
+    Complete { result: (Set, MerkleClaimAndProof) },
     Error(String),
 }
 
@@ -72,7 +73,7 @@ pub enum Request {
     Create { req_id: Uuid },
     Update { req_id: Uuid, id: i64, op: Op },
     UpdateRev { req_id: Uuid, id: i64, num: i64 },
-    Query { req_id: Uuid, id: i64, user: Value },
+    Query { req_id: Uuid, id: i64, user: String },
 }
 
 pub async fn handle_loop(ctx: Arc<Context>, mut queue_rx: Receiver<Request>) {
@@ -120,10 +121,10 @@ pub async fn handle_req(ctx: Arc<Context>, req: Request) -> Result<()> {
         Request::Query { req_id, id, user } => {
             if let Err(err) = handle_query(ctx.clone(), req_id, id, user).await {
                 debug!(req_id = format!("{}", req_id), err = format!("{}", err));
-                ctx.queue_state
-                    .write()
-                    .await
-                    .insert(req_id, State::Query(StateQuery::Error(err.to_string())));
+                ctx.queue_state.write().await.insert(
+                    req_id,
+                    State::Query(Box::new(StateQuery::Error(err.to_string()))),
+                );
             }
         }
     }
@@ -291,7 +292,7 @@ async fn handle_update_rev(ctx: Arc<Context>, req_id: Uuid, id: i64, num: i64) -
     };
 
     let (old_rev_state_pod, rev_state) = if num > 1 {
-        let rev_name = format!("{:08}-{:08}-rev_membership_list", id, num - 1);
+        let rev_name = rev_membership_list_pod_file_name(id, num - 1);
         let old_rev_state_pod = load_pod(Path::new(&ctx.cfg.pods_path), &rev_name)?;
         let rev_state = db::get_rev_membership_list(&ctx.db_pool, id).await?.state;
         (Some(old_rev_state_pod), rev_state.0)
@@ -333,7 +334,7 @@ async fn handle_update_rev(ctx: Arc<Context>, req_id: Uuid, id: i64, num: i64) -
 
     store_pod(
         Path::new(&ctx.cfg.pods_path),
-        &format!("{:08}-{:08}-rev_membership_list", id, num),
+        &rev_membership_list_pod_file_name(id, num),
         &rev_state_pod,
     )?;
 
@@ -342,51 +343,36 @@ async fn handle_update_rev(ctx: Arc<Context>, req_id: Uuid, id: i64, num: i64) -
     Ok(())
 }
 
-async fn handle_query(ctx: Arc<Context>, req_id: Uuid, id: i64, user: Value) -> Result<()> {
+async fn handle_query(ctx: Arc<Context>, req_id: Uuid, id: i64, user: String) -> Result<()> {
     let set_req_state = async |req_state| {
         ctx.queue_state
             .write()
             .await
-            .insert(req_id, State::Query(req_state));
+            .insert(req_id, State::Query(Box::new(req_state)));
     };
 
     // get state from db
-    let state = db::get_membership_list(&ctx.db_pool, id).await?.state.0;
+    let state = db::get_rev_membership_list(&ctx.db_pool, id).await?.state.0;
 
-    let dict_kvs = state
-        .kvs()
-        .iter()
-        .map(|(group, v)| {
-            set_from_value(v).and_then(|s| {
-                Group::from_str(group.name())
-                    .map_err(|_| anyhow!("Invalid group: {}", group))
-                    .map(|group| (group, s))
-            })
-        })
-        .collect::<Result<Vec<_>>>()?;
+    // Get Merkle proof + groups to which the user belongs
+    let pf_with_groups = state.prove(&user.clone().into());
 
-    let result = dict_kvs
-        .into_iter()
-        .filter_map(|(group, s)| {
-            s.contains(&user).then(|| {
-                s.prove(&user)
-                    .map(|proof| {
-                        (
-                            group,
-                            MerkleClaimAndProof {
-                                root: s.commitment(),
-                                key: user.raw(),
-                                value: user.raw(),
-                                proof,
-                            },
-                        )
-                    })
-                    .map_err(|e| e.into())
-            })
-        })
-        .collect::<Result<HashMap<_, _>>>()?;
+    match pf_with_groups {
+        Err(e) => set_req_state(StateQuery::Error(format!("{}", e))).await,
+        Ok((groups, proof)) => {
+            let result = (
+                set_from_value(groups)?,
+                MerkleClaimAndProof {
+                    root: state.commitment(),
+                    key: Value::from(user).raw(),
+                    value: groups.raw(),
+                    proof,
+                },
+            );
 
-    set_req_state(StateQuery::Complete { result }).await;
+            set_req_state(StateQuery::Complete { result }).await;
+        }
+    }
 
     Ok(())
 }
