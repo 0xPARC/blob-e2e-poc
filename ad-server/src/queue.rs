@@ -64,7 +64,9 @@ pub enum StateUpdateRev {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum StateQuery {
     Pending,
-    Complete { result: (Set, MerkleClaimAndProof) },
+    Complete {
+        result: Box<(Set, MerkleClaimAndProof)>,
+    },
     Error(String),
 }
 
@@ -370,7 +372,10 @@ async fn handle_query(ctx: Arc<Context>, req_id: Uuid, id: i64, user: String) ->
                 },
             );
 
-            set_req_state(StateQuery::Complete { result }).await;
+            set_req_state(StateQuery::Complete {
+                result: Box::new(result),
+            })
+            .await;
         }
     }
 

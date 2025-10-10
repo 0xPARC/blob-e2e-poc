@@ -185,7 +185,9 @@ fn with_ctx(
 mod tests {
     use app::Group;
     use common::shrink::ShrunkMainPodSetup;
-    use pod2::{backends::plonky2::basetypes::DEFAULT_VD_SET, middleware::Params};
+    use pod2::{
+        backends::plonky2::basetypes::DEFAULT_VD_SET, frontend::MainPod, middleware::Params,
+    };
     use tokio::{
         sync::mpsc,
         task,
@@ -375,6 +377,7 @@ mod tests {
             .reply(&api)
             .await;
         assert_eq!(res.status(), StatusCode::OK);
+        serde_json::from_slice::<MainPod>(res.body()).expect("Should be a MainPod.");
 
         // Delete Alice.
         helper_membership_list_update(
