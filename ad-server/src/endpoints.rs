@@ -1,8 +1,10 @@
-use std::sync::Arc;
+use std::{path::Path, sync::Arc};
 
 use app::Op;
-use common::CustomError;
-use pod2::middleware::Value;
+use common::{
+    CustomError,
+    disk::{load_pod, rev_membership_list_pod_file_name},
+};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use warp::Filter;
@@ -32,6 +34,21 @@ pub async fn handler_membership_list_get(
         .await
         .map_err(|e| CustomError(e.to_string()))?;
     Ok(warp::reply::json(&membership_list))
+}
+
+// GET /reverse_membership_list_pod/{id}
+pub async fn handler_reverse_membership_list_pod_get(
+    id: i64,
+    ctx: Arc<Context>,
+) -> Result<impl warp::Reply, warp::Rejection> {
+    let num = db::get_rev_membership_list(&ctx.db_pool, id)
+        .await
+        .map_err(|e| CustomError(e.to_string()))?
+        .num;
+    let rev_name = rev_membership_list_pod_file_name(id, num);
+    let reverse_index_pod = load_pod(Path::new(&ctx.cfg.pods_path), &rev_name)
+        .map_err(|e| CustomError(e.to_string()))?;
+    Ok(warp::reply::json(&reverse_index_pod))
 }
 
 #[derive(Serialize, Deserialize)]
@@ -81,16 +98,12 @@ pub async fn handler_user_get(
     ctx: Arc<Context>,
 ) -> Result<impl warp::Reply, warp::Rejection> {
     let req_id = Uuid::now_v7();
-    ctx.queue_state
-        .write()
-        .await
-        .insert(req_id, queue::State::Query(queue::StateQuery::Pending));
+    ctx.queue_state.write().await.insert(
+        req_id,
+        queue::State::Query(Box::new(queue::StateQuery::Pending)),
+    );
     ctx.queue_tx
-        .send(queue::Request::Query {
-            req_id,
-            id,
-            user: Value::from(user),
-        })
+        .send(queue::Request::Query { req_id, id, user })
         .await
         .map_err(|e| CustomError(e.to_string()))?;
     Ok(warp::reply::json(&QueueResp { req_id }))
@@ -103,6 +116,7 @@ pub fn routes(
     ctx: Arc<Context>,
 ) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
     membership_list_get(ctx.clone())
+        .or(reverse_membership_list_pod_get(ctx.clone()))
         .or(request_get(ctx.clone()))
         .or(membership_list_create(ctx.clone()))
         .or(membership_list_update(ctx.clone()))
@@ -124,6 +138,15 @@ fn membership_list_get(
         .and(with_ctx(ctx))
         .and_then(handler_membership_list_get)
 }
+fn reverse_membership_list_pod_get(
+    ctx: Arc<Context>,
+) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
+    warp::path!("reverse_membership_list_pod" / i64)
+        .and(warp::get())
+        .and(with_ctx(ctx))
+        .and_then(handler_reverse_membership_list_pod_get)
+}
+
 fn membership_list_create(
     ctx: Arc<Context>,
 ) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
@@ -162,7 +185,9 @@ fn with_ctx(
 mod tests {
     use app::Group;
     use common::shrink::ShrunkMainPodSetup;
-    use pod2::{backends::plonky2::basetypes::DEFAULT_VD_SET, middleware::Params};
+    use pod2::{
+        backends::plonky2::basetypes::DEFAULT_VD_SET, frontend::MainPod, middleware::Params,
+    };
     use tokio::{
         sync::mpsc,
         task,
@@ -333,7 +358,7 @@ mod tests {
             assert_eq!(res.status(), StatusCode::OK);
             let resp: queue::State = serde_json::from_slice(res.body()).expect("");
             match resp {
-                queue::State::Query(state_query) => match state_query {
+                queue::State::Query(state_query) => match *state_query {
                     queue::StateQuery::Complete { result } => {
                         println!("{:?}", result);
                         break;
@@ -344,6 +369,15 @@ mod tests {
                 state => panic!("{:?} != StateQuery::Complete", state),
             }
         }
+
+        // Get reverse membership list POD
+        let res = warp::test::request()
+            .method("GET")
+            .path("/reverse_membership_list_pod/1")
+            .reply(&api)
+            .await;
+        assert_eq!(res.status(), StatusCode::OK);
+        serde_json::from_slice::<MainPod>(res.body()).expect("Should be a MainPod.");
 
         // Delete Alice.
         helper_membership_list_update(

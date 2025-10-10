@@ -20,6 +20,12 @@ echo -e "\nadd to membership_list, response:"
 echo -e "\ngetting membership_list, response:"
 ./client.sh --wait-complete membership_list_get 1
 
+echo -e "\ngetting reverse membership list POD, response:"
+./client.sh reverse_membership_list_pod_get 1
+
+echo -e "\ngetting proof of membership, response:"
+./client.sh --wait-complete user_get 1 alice
+
 echo -e "\ndel from membership_list, response:"
 ./client.sh --wait-complete membership_list_update 1 '{"del":{"group":"blue","user":"alice"}}'
 
