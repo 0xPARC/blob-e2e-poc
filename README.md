@@ -19,10 +19,10 @@
 ### Requirements
 Required software: [curl](https://curl.se), [git](https://git-scm.com), [rust](https://rust-lang.org), [go](https://go.dev), [tmux](https://github.com/tmux/tmux), [jq](https://github.com/jqlang/jq).
 
-Copy the `.env.default` file into `.env`, and set the `PRIV_KEY` and `RPC_URL` values.
+Copy the `.env.default` file into `.env`, and set the `PRIV_KEY` (corresponding to an address which holds some Sepolia ETH) and `RPC_URL` values.
 
 ### Run
-Once having the `.env` file ready with the `PRIV_KEYI` and `RPC_URL` properly filled, to run the artifacts generation, and the AD-Server & Synchronizer, together with a bash script that interacts with both, run the following command:
+Once having the `.env` file ready with the `PRIV_KEY` and `RPC_URL` properly filled, to run the artifacts generation, and the AD-Server & Synchronizer, together with a bash script that interacts with both, run the following command:
 - `./full-flow.sh`
 
 This will generate all the needed files, and it will open a new tmux session with 3 panels; one for the AD-Server, one for the Synchronizer, and one to run the `full-flow-requests.sh` file which acts as a client.
