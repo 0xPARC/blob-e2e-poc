@@ -26,6 +26,17 @@ pub fn init() -> Result<()> {
     Ok(())
 }
 
+pub fn load_vk() -> Result<()> {
+    // check that the trusted setup & r1cs files exist
+    let vk_path = Path::new(&OUTPUT_PATH).join("verifying.key");
+    if !vk_path.exists() {
+        return Err(anyhow!("not found: vk. Path: vk: {:?}", vk_path,));
+    }
+
+    pod2_onchain::load_vk(OUTPUT_PATH);
+    Ok(())
+}
+
 /// computes the one extra recursive proof from the given MainPod's proof in
 /// order to shrink it, together with using the bn254's poseidon variant in the
 /// configuration of the plonky2 prover, in order to make it compatible with the
@@ -161,8 +172,17 @@ mod tests {
         init()?;
 
         // compute its plonky2 & groth16 proof
-        let (g16_proof, g16_pub_inp) = prove(pod)?;
-        pod2_onchain::groth16_verify(g16_proof, g16_pub_inp)?;
+        let (g16_proof, g16_pub_inp) = prove(pod.clone())?;
+        pod2_onchain::groth16_verify(g16_proof.clone(), g16_pub_inp)?;
+
+        // test the public_inputs parsing flow
+        let (_, _, proof_with_pis) = pod2_onchain::prove_pod(pod)?;
+        let pub_inp = proof_with_pis.public_inputs;
+
+        // encode it as big-endian bytes compatible with Gnark
+        let pub_inp_bytes = pod2_onchain::encode_public_inputs_gnark(pub_inp);
+        // call groth16_verify again but now using the encoded pub_inp_bytes
+        pod2_onchain::groth16_verify(g16_proof, pub_inp_bytes)?;
 
         Ok(())
     }

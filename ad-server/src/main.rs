@@ -23,7 +23,7 @@ use tokio::{
     },
     task,
 };
-use tracing::info;
+use tracing::{info, warn};
 use uuid::Uuid;
 
 pub mod db;
@@ -148,6 +148,9 @@ async fn main() -> Result<()> {
 
     if cfg.proof_type == ProofType::Groth16 {
         // initialize groth16 memory
+        warn!(
+            "WARNING: loading Groth16 artifacts, please wait till the pk & vk are loaded (>30s) and the server is running"
+        );
         common::groth::init()?;
     }
 

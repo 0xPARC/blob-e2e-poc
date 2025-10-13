@@ -17,17 +17,17 @@ DB2_PATH=$(sed -n 's/^SYNCHRONIZER_SQLITE_PATH="\([^"]*\)"/\1/p' .env)
 rm -f $DB1_PATH
 rm -f $DB2_PATH
 
-# # if the sample pod proof does not exist, create it
-# if [ ! -d "tmp/plonky2-proof" ]; then
-# 	echo -e "generate a first POD proof to have a sample for the Groth16 verifier"
-# 	cargo test --release -p common gen_sample_pod_proof -- --nocapture --ignored
-# fi
+# if the sample pod proof does not exist, create it
+if [ ! -d "tmp/plonky2-proof" ]; then
+	echo -e "generate a first POD proof to have a sample for the Groth16 verifier"
+	cargo test --release -p common gen_sample_pod_proof -- --nocapture --ignored
+fi
 
-# # if the trusted setup does not exist, create it
-# if [ ! -d "tmp/groth-artifacts" ]; then
-# 	echo -e "generate Groth16 trusted setup, using the POD's plonky2 sample"
-# 	cargo test --release -p common gen_trusted_setup -- --nocapture --ignored
-# fi
+# if the trusted setup does not exist, create it
+if [ ! -d "tmp/groth-artifacts" ]; then
+	echo -e "generate Groth16 trusted setup, using the POD's plonky2 sample"
+	cargo test --release -p common gen_trusted_setup -- --nocapture --ignored
+fi
 
 # set new variable to use tmux in a new env
 tmux="tmux -L ad-demo -f /dev/null"
@@ -41,7 +41,7 @@ $tmux split-window -t 0 -v
 $tmux send-keys -t fullflow:0.0 'cd ad-server && RUST_LOG=ad_server=debug,common=debug cargo run --release -p ad-server' C-m
 
 # run the Synchronizer server
-$tmux send-keys -t fullflow:0.1 'RUST_LOG=synchronizer=debug,common=debug cargo run --release -p synchronizer' C-m
+$tmux send-keys -t fullflow:0.1 'cd synchronizer && RUST_LOG=synchronizer=debug,common=debug cargo run --release -p synchronizer' C-m
 
 # leave ready the full-flow script command without executing it yet
 $tmux send-keys -t fullflow:0.2 'echo "INSTRUCTIONS: once the first two panels are already running the servers (AD & Synchronizer), execute the following command to run the integration test:"' C-m
