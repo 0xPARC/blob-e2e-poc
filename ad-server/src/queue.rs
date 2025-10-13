@@ -65,7 +65,8 @@ pub enum StateUpdateRev {
 pub enum StateQuery {
     Pending,
     Complete {
-        result: Box<(Set, MerkleClaimAndProof)>,
+        groups: Set,
+        proof: Box<MerkleClaimAndProof>,
     },
     Error(String),
 }
@@ -360,9 +361,15 @@ async fn handle_query(ctx: Arc<Context>, req_id: Uuid, id: i64, user: String) ->
     let pf_with_groups = state.prove(&user.clone().into());
 
     match pf_with_groups {
-        Err(e) => set_req_state(StateQuery::Error(format!("{}", e))).await,
+        Err(_) => {
+            set_req_state(StateQuery::Error(format!(
+                r#"User "{}" is not a member of any group."#,
+                user
+            )))
+            .await
+        }
         Ok((groups, proof)) => {
-            let result = (
+            let (groups, proof) = (
                 set_from_value(groups)?,
                 MerkleClaimAndProof {
                     root: state.commitment(),
@@ -373,7 +380,8 @@ async fn handle_query(ctx: Arc<Context>, req_id: Uuid, id: i64, user: String) ->
             );
 
             set_req_state(StateQuery::Complete {
-                result: Box::new(result),
+                groups,
+                proof: Box::new(proof),
             })
             .await;
         }

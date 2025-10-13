@@ -186,7 +186,9 @@ mod tests {
     use app::Group;
     use common::shrink::ShrunkMainPodSetup;
     use pod2::{
-        backends::plonky2::basetypes::DEFAULT_VD_SET, frontend::MainPod, middleware::Params,
+        backends::plonky2::basetypes::DEFAULT_VD_SET,
+        frontend::MainPod,
+        middleware::{Params, Value},
     };
     use tokio::{
         sync::mpsc,
@@ -359,8 +361,9 @@ mod tests {
             let resp: queue::State = serde_json::from_slice(res.body()).expect("");
             match resp {
                 queue::State::Query(state_query) => match *state_query {
-                    queue::StateQuery::Complete { result } => {
-                        println!("{:?}", result);
+                    queue::StateQuery::Complete { groups, proof } => {
+                        assert_eq!(proof.value, Value::from(groups).raw());
+                        assert_eq!(proof.key, Value::from("alice").raw());
                         break;
                     }
                     queue::StateQuery::Error(e) => panic!("StateQuery::Error: {}", e),
