@@ -153,7 +153,7 @@ async fn send_tx(
         break tx_hash;
     };
     let receipt = provider.get_transaction_receipt(tx_hash).await?;
-    Ok((receipt.ok_or(anyhow!("tx exists"))?, tx_hash))
+    Ok((receipt.expect("tx exists"), tx_hash))
 }
 
 #[cfg(test)]
