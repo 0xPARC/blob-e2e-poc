@@ -145,5 +145,3 @@ pub async fn update_rev_membership_list(
         .await?;
     Ok(())
 }
-
-// user/NAME (get groups that user NAME belongs to): /user/MEMBER. Returns { "red": MERKLE_PF, ... }

@@ -46,6 +46,10 @@ case "$1" in
 		user=$3
 		resp=$(curl $CURL_OPTS -X GET "$BASE_URL/user/$ad_id/$user")
 		;;
+	reverse_membership_list_pod_get)
+		ad_id=$2
+		resp=$(curl $CURL_OPTS -X GET "$BASE_URL/reverse_membership_list_pod/$ad_id")
+		;;
 	*)
 		usage
 		exit 1
