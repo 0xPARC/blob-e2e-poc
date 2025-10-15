@@ -6,7 +6,7 @@ use std::{
     str::FromStr,
 };
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use common::set_from_value;
 use hex::ToHex;
 use pod2::{
@@ -22,12 +22,32 @@ use serde::{Deserialize, Serialize};
 pub const DEPTH: usize = 32;
 
 #[macro_export]
+macro_rules! set {
+    () => ({
+        pod2::middleware::containers::Set::new(DEPTH, std::collections::HashSet::new()).unwrap()
+    });
+    ($($val:expr),* ,) => (
+        $crate::set!($($val),*).unwrap()
+    );
+    ($($val:expr),*) => ({
+        let mut set = std::collections::HashSet::new();
+        $( set.insert($crate::middleware::Value::from($val)); )*
+        pod2::middleware::containers::Set::new(DEPTH, set).unwrap()
+    });
+}
+
+#[macro_export]
 macro_rules! dict {
+    ({ }) => (
+        pod2::middleware::containers::Dictionary::new(DEPTH, std::collections::HashMap::new()).unwrap()
+    );
     ({ $($key:expr => $val:expr),* , }) => (
         $crate::dict!({ $($key => $val),* }).unwrap()
     );
     ({ $($key:expr => $val:expr),* }) => ({
-        pod2::dict!(DEPTH, { $($key => $val),* }).unwrap()
+        let mut map = std::collections::HashMap::new();
+        $( map.insert(pod2::middleware::Key::from($key.clone()), pod2::middleware::Value::from($val.clone())); )*
+        pod2::middleware::containers::Dictionary::new(DEPTH, map).unwrap()
     });
 }
 
@@ -340,6 +360,58 @@ pub fn build_predicates(params: &Params) -> (Predicates, RevPredicates) {
     (state_preds, rev_preds)
 }
 
+macro_rules! op {
+    (Equal($a:expr, $b:expr)) => {
+        pod2::frontend::Operation::eq($a.clone(), $b.clone())
+    };
+    (DictContains($dict:expr, $key:expr, $value:expr)) => {
+        pod2::frontend::Operation::dict_contains($dict.clone(), $key.clone(), $value.clone())
+    };
+    (DictUpdate($dict:expr, $old_dict:expr, $key:expr, $value:expr)) => {
+        pod2::frontend::Operation::dict_update(
+            $dict.clone(),
+            $old_dict.clone(),
+            $key.clone(),
+            $value.clone(),
+        )
+    };
+    (DictInsert($dict:expr, $old_dict:expr, $key:expr, $value:expr)) => {
+        pod2::frontend::Operation::dict_insert(
+            $dict.clone(),
+            $old_dict.clone(),
+            $key.clone(),
+            $value.clone(),
+        )
+    };
+    (DictDelete($dict:expr, $old_dict:expr, $key:expr)) => {
+        pod2::frontend::Operation::dict_delete($dict.clone(), $old_dict.clone(), $key.clone())
+    };
+    (SetInsert($set:expr, $old_set:expr, $value:expr)) => {
+        pod2::frontend::Operation::set_insert($set.clone(), $old_set.clone(), $value.clone())
+    };
+    (SetDelete($set:expr, $old_set:expr, $value:expr)) => {
+        pod2::frontend::Operation::set_delete($set.clone(), $old_set.clone(), $value.clone())
+    };
+}
+
+macro_rules! st {
+    ($builder:expr, $pred:ident($($args:expr),+)) => {
+        $builder.priv_op(op!($pred($($args),+))).unwrap()
+    };
+}
+
+macro_rules! st_custom_from_ops {
+    ($builder:expr, $custom_pred:expr, ($($ops:expr),+)) => ({
+        let mut input_sts = Vec::new();
+        $( input_sts.push($builder.priv_op($ops).unwrap()); )*
+        $builder.priv_op(pod2::frontend::Operation::custom(
+            $custom_pred.clone(),
+            input_sts
+        ))
+        .unwrap()
+    })
+}
+
 pub struct Helper<'a> {
     pub builder: &'a mut MainPodBuilder,
     pub predicates: &'a Predicates,
@@ -356,37 +428,25 @@ impl<'a> Helper<'a> {
     pub fn st_init(&mut self, old: Dictionary, op: Dictionary) -> Result<(Dictionary, Statement)> {
         let name = String::try_from(op.get(&Key::from("name")).unwrap().typed()).unwrap();
         assert_eq!(name, "init");
-        // DictContains(op, "name", "init")
-        let st0 = self
-            .builder
-            .priv_op(Operation::dict_contains(op.clone(), "name", "init"))
-            .unwrap();
-        // Equal(old, EMPTY)
-        let st1 = self
-            .builder
-            .priv_op(Operation::eq(old.clone(), EMPTY_VALUE))
-            .context("old state is not empty")?;
-
-        let empty_group = Value::from(Set::new(DEPTH, HashSet::new()).unwrap());
+        if Value::from(old.clone()) != Value::from(EMPTY_VALUE) {
+            bail!("old state is not empty")
+        }
         let init_state = dict!({
-            "red" => empty_group.clone(),
-            "green" => empty_group.clone(),
-            "blue" => empty_group}
+            "red" => set!(),
+            "green" => set!(),
+            "blue" => set!()}
         );
-        // Equal(new, {"red": EMPTY, "green": EMPTY, "blue": EMPTY})
-        let st2 = self
-            .builder
-            .priv_op(Operation::eq(init_state.clone(), init_state.clone()))
-            .unwrap();
 
         // init(new, old, op)
-        let st = self
-            .builder
-            .priv_op(Operation::custom(
-                self.predicates.init.clone(),
-                [st0, st1, st2],
-            ))
-            .unwrap();
+        let st = st_custom_from_ops!(
+            self.builder,
+            self.predicates.init,
+            (
+                op!(DictContains(op, "name", "init")),
+                op!(Equal(old, EMPTY_VALUE)),
+                op!(Equal(init_state, init_state))
+            )
+        );
         Ok((init_state, st))
     }
 
@@ -399,28 +459,14 @@ impl<'a> Helper<'a> {
         assert!(name == "add" || name == "del");
 
         let st0 = if name == "add" {
-            // DictContains(op, "name", "add")
-            self.builder
-                .priv_op(Operation::dict_contains(op.clone(), "name", "add"))
-                .unwrap()
+            st!(self.builder, DictContains(op, "name", "add"))
         } else {
-            // DictContains(op, "name", "del")
-            self.builder
-                .priv_op(Operation::dict_contains(op.clone(), "name", "del"))
-                .unwrap()
+            st!(self.builder, DictContains(op, "name", "del"))
         };
 
         let group = Key::try_from(op.get(&Key::from("group")).unwrap().typed()).unwrap();
         let old_group = old.get(&group).unwrap();
-        // DictContains(old, op.group, old_group)
-        let st1 = self
-            .builder
-            .priv_op(Operation::dict_contains(
-                old.clone(),
-                (&op, "group"),
-                old_group.clone(),
-            ))
-            .unwrap();
+        let st1 = st!(self.builder, DictContains(old, (&op, "group"), old_group));
 
         let user = op.get(&Key::from("user")).unwrap();
         let mut new_group = if let TypedValue::Set(set) = old_group.typed() {
@@ -429,39 +475,26 @@ impl<'a> Helper<'a> {
             panic!("Value not a Set: {:?}", old_group)
         };
         let st2 = if name == "add" {
+            if new_group.contains(user) {
+                bail!("old_group already contains user");
+            }
             new_group.insert(user).unwrap();
-            // SetInsert(new_group, old_group, op.user)
-            self.builder
-                .priv_op(Operation::set_insert(
-                    new_group.clone(),
-                    old_group.clone(),
-                    (&op, "user"),
-                ))
-                .context("old_group already contains user")?
+            st!(self.builder, SetInsert(new_group, old_group, (&op, "user")))
         } else {
+            if !new_group.contains(user) {
+                bail!("old_group doesn't contain user");
+            }
             new_group.delete(user).unwrap();
-            // SetDelete(new_group, old_group, op.user)
-            self.builder
-                .priv_op(Operation::set_delete(
-                    new_group.clone(),
-                    old_group.clone(),
-                    (&op, "user"),
-                ))
-                .context("old_group doesn't contain user")?
+            st!(self.builder, SetDelete(new_group, old_group, (&op, "user")))
         };
 
         let mut new = old.clone();
         new.update(&group, &Value::from(new_group.clone())).unwrap();
         // DictUpdate(new, old, op.group, new_group)
-        let st3 = self
-            .builder
-            .priv_op(Operation::dict_update(
-                new.clone(),
-                old.clone(),
-                (&op, "group"),
-                new_group,
-            ))
-            .unwrap();
+        let st3 = st!(
+            self.builder,
+            DictUpdate(new, old, (&op, "group"), new_group)
+        );
 
         let st = if name == "add" {
             // add(new, old, op, private: old_group, new_group)
@@ -542,15 +575,9 @@ impl<'a> RevHelper<'a> {
         st_update: Statement,
         op: Dictionary,
     ) -> (Dictionary, Statement) {
-        let init_rev_state = Dictionary::new(DEPTH, HashMap::new()).unwrap();
-        let st1 = self
-            .builder
-            .priv_op(Operation::dict_contains(op.clone(), "name", "init"))
-            .unwrap();
-        let st2 = self
-            .builder
-            .priv_op(Operation::eq(init_rev_state.clone(), EMPTY_VALUE))
-            .unwrap();
+        let init_rev_state = dict!({});
+        let st1 = st!(self.builder, DictContains(op, "name", "init"));
+        let st2 = st!(self.builder, Equal(init_rev_state, EMPTY_VALUE));
         (
             init_rev_state,
             self.builder
@@ -576,23 +603,14 @@ impl<'a> RevHelper<'a> {
         new_rev
             .insert(user, &Value::from(user_groups.clone()))
             .unwrap();
-        let st0 = self
-            .builder
-            .priv_op(Operation::set_insert(
-                user_groups.clone(),
-                empty_set,
-                (&op, "group"),
-            ))
-            .unwrap();
-        let st1 = self
-            .builder
-            .priv_op(Operation::dict_insert(
-                new_rev.clone(),
-                old_rev,
-                (&op, "user"),
-                user_groups,
-            ))
-            .unwrap();
+        let st0 = st!(
+            self.builder,
+            SetInsert(user_groups, empty_set, (&op, "group"))
+        );
+        let st1 = st!(
+            self.builder,
+            DictInsert(new_rev, old_rev, (&op, "user"), user_groups)
+        );
         (
             new_rev,
             self.builder
@@ -623,31 +641,18 @@ impl<'a> RevHelper<'a> {
             .update(user, &Value::from(user_groups.clone()))
             .unwrap();
 
-        let st0 = self
-            .builder
-            .priv_op(Operation::dict_contains(
-                old_rev.clone(),
-                (&op, "user"),
-                old_user_groups.clone(),
-            ))
-            .unwrap();
-        let st1 = self
-            .builder
-            .priv_op(Operation::set_insert(
-                user_groups.clone(),
-                old_user_groups.clone(),
-                (&op, "group"),
-            ))
-            .unwrap();
-        let st2 = self
-            .builder
-            .priv_op(Operation::dict_update(
-                new_rev.clone(),
-                old_rev,
-                (&op, "user"),
-                user_groups,
-            ))
-            .unwrap();
+        let st0 = st!(
+            self.builder,
+            DictContains(old_rev, (&op, "user"), old_user_groups)
+        );
+        let st1 = st!(
+            self.builder,
+            SetInsert(user_groups, old_user_groups, (&op, "group"))
+        );
+        let st2 = st!(
+            self.builder,
+            DictUpdate(new_rev, old_rev, (&op, "user"), user_groups)
+        );
         (
             new_rev,
             self.builder
@@ -690,34 +695,18 @@ impl<'a> RevHelper<'a> {
         user: &Key,
     ) -> (Dictionary, Statement) {
         let old_user_groups = old_rev.get(user).unwrap();
-        let empty_set = Set::new(DEPTH, HashSet::new()).unwrap();
         let mut new_rev = old_rev.clone();
         new_rev.delete(user).unwrap();
 
-        let st0 = self
-            .builder
-            .priv_op(Operation::dict_contains(
-                old_rev.clone(),
-                (&op, "user"),
-                old_user_groups.clone(),
-            ))
-            .unwrap();
-        let st1 = self
-            .builder
-            .priv_op(Operation::set_delete(
-                empty_set,
-                old_user_groups.clone(),
-                (&op, "group"),
-            ))
-            .unwrap();
-        let st2 = self
-            .builder
-            .priv_op(Operation::dict_delete(
-                new_rev.clone(),
-                old_rev,
-                (&op, "user"),
-            ))
-            .unwrap();
+        let st0 = st!(
+            self.builder,
+            DictContains(old_rev, (&op, "user"), old_user_groups)
+        );
+        let st1 = st!(
+            self.builder,
+            SetDelete(set!(), old_user_groups, (&op, "group"))
+        );
+        let st2 = st!(self.builder, DictDelete(new_rev, old_rev, (&op, "user")));
         (
             new_rev,
             self.builder
@@ -748,31 +737,18 @@ impl<'a> RevHelper<'a> {
             .update(user, &Value::from(user_groups.clone()))
             .unwrap();
 
-        let st0 = self
-            .builder
-            .priv_op(Operation::dict_contains(
-                old_rev.clone(),
-                (&op, "user"),
-                old_user_groups.clone(),
-            ))
-            .unwrap();
-        let st1 = self
-            .builder
-            .priv_op(Operation::set_delete(
-                user_groups.clone(),
-                old_user_groups.clone(),
-                (&op, "group"),
-            ))
-            .unwrap();
-        let st2 = self
-            .builder
-            .priv_op(Operation::dict_update(
-                new_rev.clone(),
-                old_rev,
-                (&op, "user"),
-                user_groups,
-            ))
-            .unwrap();
+        let st0 = st!(
+            self.builder,
+            DictContains(old_rev, (&op, "user"), old_user_groups)
+        );
+        let st1 = st!(
+            self.builder,
+            SetDelete(user_groups, old_user_groups, (&op, "group"))
+        );
+        let st2 = st!(
+            self.builder,
+            DictUpdate(new_rev, old_rev, (&op, "user"), user_groups)
+        );
         (
             new_rev,
             self.builder
@@ -822,10 +798,7 @@ impl<'a> RevHelper<'a> {
         old_st_rev_sync: Statement,
         op: Dictionary,
     ) -> (Dictionary, Statement) {
-        let st2 = self
-            .builder
-            .priv_op(Operation::dict_contains(op.clone(), "name", "add"))
-            .unwrap();
+        let st2 = st!(self.builder, DictContains(op, "name", "add"));
         let (new, st3) = self.st_rev_add(old_rev, op);
         (
             new,
@@ -845,10 +818,7 @@ impl<'a> RevHelper<'a> {
         old_st_rev_sync: Statement,
         op: Dictionary,
     ) -> (Dictionary, Statement) {
-        let st2 = self
-            .builder
-            .priv_op(Operation::dict_contains(op.clone(), "name", "del"))
-            .unwrap();
+        let st2 = st!(self.builder, DictContains(op.clone(), "name", "del"));
         let (new, st3) = self.st_rev_del(old_rev, op);
         (
             new,
