@@ -50,5 +50,8 @@ pod2 = { git = "https://github.com/0xPARC/pod2?rev=main", rev = "d355e55159dbe7e
 # [patch."https://github.com/0xPARC/plonky2"]
 # plonky2 = { path = "../plonky2/plonky2" }
 
+[patch."https://github.com/0xPARC/pod2-onchain"]
+pod2_onchain = { path = "../pod2-onchain" }
+
 # [profile.release]
 # debug = true
