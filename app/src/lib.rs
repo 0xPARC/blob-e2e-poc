@@ -139,7 +139,9 @@ impl From<Group> for TypedValue {
 ///   "green" => Set(...),
 ///   "blue" => Set(...),
 /// }
-pub fn build_predicates(params: &Params) -> (Predicates, RevPredicates) {
+pub fn build_predicates(
+    params: &Params,
+) -> (Predicates, RevPredicates, Vec<Arc<CustomPredicateBatch>>) {
     let empty = format!("Raw({:#})", EMPTY_VALUE);
     let empty_state = format!(
         r#"{{"{r}": {empty}, "{g}": {empty}, "{b}": {empty}}}"#,
@@ -319,6 +321,13 @@ pub fn build_predicates(params: &Params) -> (Predicates, RevPredicates) {
 
     // State batch predicates
 
+    let batches = vec![
+        state_batch.clone(),
+        rev_state_add_batch.clone(),
+        rev_state_del_batch.clone(),
+        rev_state_batch.clone(),
+    ];
+
     let state_preds = Predicates {
         init: state_batch.predicate_ref_by_name("init").unwrap(),
         add: state_batch.predicate_ref_by_name("add").unwrap(),
@@ -359,7 +368,7 @@ pub fn build_predicates(params: &Params) -> (Predicates, RevPredicates) {
         sync: rev_state_batch.predicate_ref_by_name("rev_sync").unwrap(),
     };
 
-    (state_preds, rev_preds)
+    (state_preds, rev_preds, batches)
 }
 
 macro_rules! op {
@@ -431,34 +440,43 @@ fn find_custom_pred_by_name(
     return None;
 }
 
-macro_rules! st_custom_from_ops2 {
-    ($builder:expr, $batches:expr, $pred:ident($($ops:expr),+)) => ({
+macro_rules! _st_custom_args {
+    ($builder:expr, $input_sts:expr,) => {{
+    }};
+    ($builder:expr, $input_sts:expr, $pred:ident($($args:expr),+), $($tail:tt)*) => {{
+        $input_sts.push($builder.priv_op(op!($pred($($args),+))).unwrap());
+        _st_custom_args!($builder, $input_sts, $($tail)*)
+    }};
+    ($builder:expr, $input_sts:expr, $st:expr, $($tail:tt)*) => {{
+        $input_sts.push($st);
+        _st_custom_args!($builder, $input_sts, $($tail)*)
+    }};
+}
+
+/// `$builder: &mut MainPodBuilder, $batches: &[Arc<CustomPredicateBatch], $ops: Operation`
+macro_rules! st_custom {
+    (($builder:expr, $batches:expr), $pred:ident($($args:tt)*)) => {{
         let custom_pred = find_custom_pred_by_name($batches, stringify!($pred)).unwrap();
         let mut input_sts = Vec::new();
-        $( input_sts.push($builder.priv_op($ops).unwrap()); )*
-        $builder.priv_op(pod2::frontend::Operation::custom(
-            custom_pred,
-            input_sts
-        ))
-        .unwrap()
-    })
+        _st_custom_args!($builder, &mut input_sts, $($args)*);
+        $builder
+            .priv_op(pod2::frontend::Operation::custom(custom_pred, input_sts))
+            .unwrap()
+    }};
 }
 
 pub struct Helper<'a> {
     pub builder: &'a mut MainPodBuilder,
     pub batches: &'a [Arc<CustomPredicateBatch>],
-    pub predicates: &'a Predicates,
 }
 
 impl<'a> Helper<'a> {
     pub fn new(
         pod_builder: &'a mut MainPodBuilder,
-        predicates: &'a Predicates,
         batches: &'a [Arc<CustomPredicateBatch>],
     ) -> Self {
         Self {
             builder: pod_builder,
-            predicates,
             batches,
         }
     }
@@ -476,13 +494,12 @@ impl<'a> Helper<'a> {
         );
 
         // init(new, old, op)
-        let st = st_custom_from_ops2!(
-            self.builder,
-            self.batches,
+        let st = st_custom!(
+            (self.builder, self.batches),
             init(
-                op!(DictContains(op, "name", "init")),
-                op!(Equal(old, EMPTY_VALUE)),
-                op!(Equal(init_state, init_state))
+                DictContains(op, "name", "init"),
+                Equal(old, EMPTY_VALUE),
+                Equal(init_state, init_state),
             )
         );
         Ok((init_state, st))
@@ -510,14 +527,13 @@ impl<'a> Helper<'a> {
         new.update(&group, &Value::from(new_group.clone())).unwrap();
 
         // add(new, old, op, private: old_group, new_group)
-        let st = st_custom_from_ops!(
-            self.builder,
-            self.predicates.add,
-            (
-                op!(DictContains(op, "name", "add")),
-                op!(DictContains(old, (&op, "group"), old_group)),
-                op!(SetInsert(new_group, old_group, (&op, "user"))),
-                op!(DictUpdate(new, old, (&op, "group"), new_group))
+        let st = st_custom!(
+            (self.builder, self.batches),
+            add(
+                DictContains(op, "name", "add"),
+                DictContains(old, (&op, "group"), old_group),
+                SetInsert(new_group, old_group, (&op, "user")),
+                DictUpdate(new, old, (&op, "group"), new_group),
             )
         );
         Ok((new, st))
@@ -545,14 +561,13 @@ impl<'a> Helper<'a> {
         new.update(&group, &Value::from(new_group.clone())).unwrap();
 
         // del(new, old, op, private: old_group, new_group)
-        let st = st_custom_from_ops!(
-            self.builder,
-            self.predicates.add,
-            (
-                op!(DictContains(op, "name", "del")),
-                op!(DictContains(old, (&op, "group"), old_group)),
-                op!(SetDelete(new_group, old_group, (&op, "user"))),
-                op!(DictUpdate(new, old, (&op, "group"), new_group))
+        let st = st_custom!(
+            (self.builder, self.batches),
+            del(
+                DictContains(op, "name", "del"),
+                DictContains(old, (&op, "group"), old_group),
+                SetDelete(new_group, old_group, (&op, "user")),
+                DictUpdate(new, old, (&op, "group"), new_group),
             )
         );
         Ok((new, st))
@@ -564,32 +579,36 @@ impl<'a> Helper<'a> {
         op: Dictionary,
     ) -> Result<(Dictionary, Statement)> {
         let name = String::try_from(op.get(&Key::from("name")).unwrap().typed()).unwrap();
-        let st_none = Statement::None;
-        let (new, sts) = match name.as_str() {
+        match name.as_str() {
             "init" => {
                 // init(new, old, op)
-                let (new, st) = self.st_init(old, op)?;
-                (new, [st, st_none.clone(), st_none.clone()])
+                let (new, st_init) = self.st_init(old, op)?;
+                let st = st_custom!(
+                    (self.builder, self.batches),
+                    update(st_init, Statement::None, Statement::None,)
+                );
+                Ok((new, st))
             }
             "add" => {
                 // add(new, old, op, private: old_group, new_group)
-                let (new, st) = self.st_add(old, op)?;
-                (new, [st_none.clone(), st, st_none.clone()])
+                let (new, st_add) = self.st_add(old, op)?;
+                let st = st_custom!(
+                    (self.builder, self.batches),
+                    update(Statement::None, st_add, Statement::None,)
+                );
+                Ok((new, st))
             }
             "del" => {
                 // del(new, old, op, private: old_group, new_group)
-                let (new, st) = self.st_del(old, op)?;
-                (new, [st_none.clone(), st_none.clone(), st])
+                let (new, st_del) = self.st_del(old, op)?;
+                let st = st_custom!(
+                    (self.builder, self.batches),
+                    update(Statement::None, Statement::None, st_del,)
+                );
+                Ok((new, st))
             }
             _ => panic!("invalid op.name = {}", name),
-        };
-
-        // update(new, old, op)
-        let st = self
-            .builder
-            .priv_op(Operation::custom(self.predicates.update.clone(), sts))
-            .unwrap();
-        Ok((new, st))
+        }
     }
 }
 
@@ -597,6 +616,7 @@ pub struct RevHelper<'a> {
     pub builder: &'a mut MainPodBuilder,
     pub predicates: &'a Predicates,
     pub rev_predicates: &'a RevPredicates,
+    pub batches: &'a [Arc<CustomPredicateBatch>],
 }
 
 impl<'a> RevHelper<'a> {
@@ -604,11 +624,13 @@ impl<'a> RevHelper<'a> {
         pod_builder: &'a mut MainPodBuilder,
         predicates: &'a Predicates,
         rev_predicates: &'a RevPredicates,
+        batches: &'a [Arc<CustomPredicateBatch>],
     ) -> Self {
         Self {
             builder: pod_builder,
             predicates,
             rev_predicates,
+            batches,
         }
     }
 
@@ -618,17 +640,15 @@ impl<'a> RevHelper<'a> {
         op: Dictionary,
     ) -> (Dictionary, Statement) {
         let init_rev_state = dict!({});
-        let st1 = st!(self.builder, DictContains(op, "name", "init"));
-        let st2 = st!(self.builder, Equal(init_rev_state, EMPTY_VALUE));
-        (
-            init_rev_state,
-            self.builder
-                .priv_op(Operation::custom(
-                    self.rev_predicates.sync_init.clone(),
-                    [st_update, st1, st2],
-                ))
-                .unwrap(),
-        )
+        let st = st_custom!(
+            (self.builder, self.batches),
+            rev_sync_init(
+                st_update,
+                DictContains(op, "name", "init"),
+                Equal(init_rev_state, EMPTY_VALUE),
+            )
+        );
+        (init_rev_state, st)
     }
 
     pub fn st_rev_add_fresh(
@@ -645,23 +665,15 @@ impl<'a> RevHelper<'a> {
         new_rev
             .insert(user, &Value::from(user_groups.clone()))
             .unwrap();
-        let st0 = st!(
-            self.builder,
-            SetInsert(user_groups, empty_set, (&op, "group"))
+
+        let st = st_custom!(
+            (self.builder, self.batches),
+            rev_add_fresh(
+                SetInsert(user_groups, empty_set, (&op, "group")),
+                DictInsert(new_rev, old_rev, (&op, "user"), user_groups),
+            )
         );
-        let st1 = st!(
-            self.builder,
-            DictInsert(new_rev, old_rev, (&op, "user"), user_groups)
-        );
-        (
-            new_rev,
-            self.builder
-                .priv_op(Operation::custom(
-                    self.rev_predicates.add_fresh.clone(),
-                    [st0, st1],
-                ))
-                .unwrap(),
-        )
+        (new_rev, st)
     }
 
     pub fn st_rev_add_existing(
@@ -683,27 +695,15 @@ impl<'a> RevHelper<'a> {
             .update(user, &Value::from(user_groups.clone()))
             .unwrap();
 
-        let st0 = st!(
-            self.builder,
-            DictContains(old_rev, (&op, "user"), old_user_groups)
+        let st = st_custom!(
+            (self.builder, self.batches),
+            rev_add_existing(
+                DictContains(old_rev, (&op, "user"), old_user_groups),
+                SetInsert(user_groups, old_user_groups, (&op, "group")),
+                DictUpdate(new_rev, old_rev, (&op, "user"), user_groups),
+            )
         );
-        let st1 = st!(
-            self.builder,
-            SetInsert(user_groups, old_user_groups, (&op, "group"))
-        );
-        let st2 = st!(
-            self.builder,
-            DictUpdate(new_rev, old_rev, (&op, "user"), user_groups)
-        );
-        (
-            new_rev,
-            self.builder
-                .priv_op(Operation::custom(
-                    self.rev_predicates.add_existing.clone(),
-                    [st0, st1, st2],
-                ))
-                .unwrap(),
-        )
+        (new_rev, st)
     }
 
     pub fn st_rev_add(&mut self, old_rev: Dictionary, op: Dictionary) -> (Dictionary, Statement) {
@@ -740,24 +740,15 @@ impl<'a> RevHelper<'a> {
         let mut new_rev = old_rev.clone();
         new_rev.delete(user).unwrap();
 
-        let st0 = st!(
-            self.builder,
-            DictContains(old_rev, (&op, "user"), old_user_groups)
+        let st = st_custom!(
+            (self.builder, self.batches),
+            rev_del_singleton(
+                DictContains(old_rev, (&op, "user"), old_user_groups),
+                SetDelete(set!(), old_user_groups, (&op, "group")),
+                DictDelete(new_rev, old_rev, (&op, "user")),
+            )
         );
-        let st1 = st!(
-            self.builder,
-            SetDelete(set!(), old_user_groups, (&op, "group"))
-        );
-        let st2 = st!(self.builder, DictDelete(new_rev, old_rev, (&op, "user")));
-        (
-            new_rev,
-            self.builder
-                .priv_op(Operation::custom(
-                    self.rev_predicates.del_singleton.clone(),
-                    [st0, st1, st2],
-                ))
-                .unwrap(),
-        )
+        (new_rev, st)
     }
 
     pub fn st_rev_del_else(
@@ -779,27 +770,15 @@ impl<'a> RevHelper<'a> {
             .update(user, &Value::from(user_groups.clone()))
             .unwrap();
 
-        let st0 = st!(
-            self.builder,
-            DictContains(old_rev, (&op, "user"), old_user_groups)
+        let st = st_custom!(
+            (self.builder, self.batches),
+            rev_del_else(
+                DictContains(old_rev, (&op, "user"), old_user_groups),
+                SetDelete(user_groups, old_user_groups, (&op, "group")),
+                DictUpdate(new_rev, old_rev, (&op, "user"), user_groups),
+            )
         );
-        let st1 = st!(
-            self.builder,
-            SetDelete(user_groups, old_user_groups, (&op, "group"))
-        );
-        let st2 = st!(
-            self.builder,
-            DictUpdate(new_rev, old_rev, (&op, "user"), user_groups)
-        );
-        (
-            new_rev,
-            self.builder
-                .priv_op(Operation::custom(
-                    self.rev_predicates.del_else.clone(),
-                    [st0, st1, st2],
-                ))
-                .unwrap(),
-        )
+        (new_rev, st)
     }
 
     pub fn st_rev_del(&mut self, old_rev: Dictionary, op: Dictionary) -> (Dictionary, Statement) {
@@ -807,30 +786,29 @@ impl<'a> RevHelper<'a> {
             Key::from(String::try_from(op.get(&Key::from("user")).unwrap().typed()).unwrap());
         let group =
             Value::from(String::try_from(op.get(&Key::from("group")).unwrap().typed()).unwrap());
-        let st_none = Statement::None;
         let groups = set_from_value(old_rev.get(&user).unwrap()).unwrap();
 
-        let (new, sts) = match groups.set().len() {
+        match groups.set().len() {
             1 => {
-                if groups.contains(&group) {
-                    let (new, st) = self.st_rev_del_singleton(old_rev, op, &user);
-                    (new, [st, st_none])
-                } else {
+                if !groups.contains(&group) {
                     panic!("User is not a member of the specified group.")
                 }
+                let (new, st_rev_del_singleton) = self.st_rev_del_singleton(old_rev, op, &user);
+                let st = st_custom!(
+                    (self.builder, self.batches),
+                    rev_del(st_rev_del_singleton, Statement::None,)
+                );
+                (new, st)
             }
             _ => {
-                let (new, st) = self.st_rev_del_else(old_rev, op, &user, &group);
-                (new, [st_none, st])
+                let (new, st_rev_del_else) = self.st_rev_del_else(old_rev, op, &user, &group);
+                let st = st_custom!(
+                    (self.builder, self.batches),
+                    rev_del(Statement::None, st_rev_del_else,)
+                );
+                (new, st)
             }
-        };
-
-        (
-            new,
-            self.builder
-                .priv_op(Operation::custom(self.rev_predicates.del.clone(), sts))
-                .unwrap(),
-        )
+        }
     }
 
     pub fn st_rev_sync_add(
@@ -840,17 +818,17 @@ impl<'a> RevHelper<'a> {
         old_st_rev_sync: Statement,
         op: Dictionary,
     ) -> (Dictionary, Statement) {
-        let st2 = st!(self.builder, DictContains(op, "name", "add"));
-        let (new, st3) = self.st_rev_add(old_rev, op);
-        (
-            new,
-            self.builder
-                .priv_op(Operation::custom(
-                    self.rev_predicates.sync_add.clone(),
-                    [old_st_rev_sync, st_update, st2, st3],
-                ))
-                .unwrap(),
-        )
+        let (new, st_rev_add) = self.st_rev_add(old_rev, op.clone());
+        let st = st_custom!(
+            (self.builder, self.batches),
+            rev_sync_add(
+                old_st_rev_sync,
+                st_update,
+                DictContains(op, "name", "add"),
+                st_rev_add,
+            )
+        );
+        (new, st)
     }
 
     pub fn st_rev_sync_del(
@@ -929,13 +907,14 @@ mod tests {
         prover: &dyn MainPodProver,
         predicates: &Predicates,
         rev_predicates: &RevPredicates,
+        batches: &[Arc<CustomPredicateBatch>],
         state: Dictionary,
         rev_state: Dictionary,
         op: Op,
         old_rev_state_pod: Option<MainPod>,
     ) -> (Dictionary, Dictionary, Option<MainPod>) {
         let mut builder = MainPodBuilder::new(params, vd_set);
-        let mut helper = Helper::new(&mut builder, predicates);
+        let mut helper = Helper::new(&mut builder, batches);
 
         // State Pod
         let (state, st_update) = helper
@@ -960,7 +939,7 @@ mod tests {
         } else {
             Statement::None
         };
-        let mut rev_helper = RevHelper::new(&mut builder, predicates, rev_predicates);
+        let mut rev_helper = RevHelper::new(&mut builder, predicates, rev_predicates, batches);
         let (rev_state, rev_st_update) =
             rev_helper.st_rev_sync(rev_state, Dictionary::from(op), st_update, old_st_rev_sync);
         builder.reveal(&rev_st_update);
@@ -979,11 +958,14 @@ mod tests {
     #[test]
     fn test_app() {
         env_logger::init();
-        // let (vd_set, prover) = (&VDSet::new(8, &[]).unwrap(), &MockProver {});
-        let (vd_set, prover) = (&*DEFAULT_VD_SET, &Prover {});
+        let (vd_set, prover) = (
+            &VDSet::new(8, &[]).unwrap(),
+            &pod2::backends::plonky2::mock::mainpod::MockProver {},
+        );
+        // let (vd_set, prover) = (&*DEFAULT_VD_SET, &Prover {});
 
         let params = Params::default();
-        let (state_predicates, rev_predicates) = build_predicates(&params);
+        let (state_predicates, rev_predicates, batches) = build_predicates(&params);
 
         // Initial state
         let mut state = dict!({});
@@ -1022,6 +1004,7 @@ mod tests {
                 prover,
                 &state_predicates,
                 &rev_predicates,
+                &batches,
                 state,
                 rev_state,
                 op,
