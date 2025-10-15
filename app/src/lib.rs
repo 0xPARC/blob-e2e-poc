@@ -384,36 +384,26 @@ impl<'a> Helper<'a> {
         op: Dictionary,
     ) -> Result<(Dictionary, Statement)> {
         let name = String::try_from(op.get(&Key::from("name")).unwrap().typed()).unwrap();
-        match name.as_str() {
+        let (new, [st0, st1, st2]) = match name.as_str() {
             "init" => {
                 // init(new, old, op)
                 let (new, st_init) = self.st_init(old, op)?;
-                let st = st_custom!(
-                    (self.builder, self.batches),
-                    update(st_init, Statement::None, Statement::None,)
-                );
-                Ok((new, st))
+                (new, [st_init, Statement::None, Statement::None])
             }
             "add" => {
                 // add(new, old, op, private: old_group, new_group)
                 let (new, st_add) = self.st_add(old, op)?;
-                let st = st_custom!(
-                    (self.builder, self.batches),
-                    update(Statement::None, st_add, Statement::None,)
-                );
-                Ok((new, st))
+                (new, [Statement::None, st_add, Statement::None])
             }
             "del" => {
                 // del(new, old, op, private: old_group, new_group)
                 let (new, st_del) = self.st_del(old, op)?;
-                let st = st_custom!(
-                    (self.builder, self.batches),
-                    update(Statement::None, Statement::None, st_del,)
-                );
-                Ok((new, st))
+                (new, [Statement::None, Statement::None, st_del])
             }
             _ => panic!("invalid op.name = {}", name),
-        }
+        };
+        let st = st_custom!((self.builder, self.batches), update(st0, st1, st2,));
+        Ok((new, st))
     }
 }
 
@@ -510,25 +500,19 @@ impl<'a> RevHelper<'a> {
             Key::from(String::try_from(op.get(&Key::from("user")).unwrap().typed()).unwrap());
         let group =
             Value::from(String::try_from(op.get(&Key::from("group")).unwrap().typed()).unwrap());
-        match old_rev.get(&user) {
+        let (new, [st0, st1]) = match old_rev.get(&user) {
             Err(_) => {
                 let (new, st_rev_add_fresh) = self.st_rev_add_fresh(old_rev, op, &user, &group);
-                let st = st_custom!(
-                    (self.builder, self.batches),
-                    rev_add(st_rev_add_fresh, Statement::None,)
-                );
-                (new, st)
+                (new, [st_rev_add_fresh, Statement::None])
             }
             Ok(_) => {
                 let (new, st_rev_add_existing) =
                     self.st_rev_add_existing(old_rev, op, &user, &group);
-                let st = st_custom!(
-                    (self.builder, self.batches),
-                    rev_add(Statement::None, st_rev_add_existing,)
-                );
-                (new, st)
+                (new, [Statement::None, st_rev_add_existing])
             }
-        }
+        };
+        let st = st_custom!((self.builder, self.batches), rev_add(st0, st1,));
+        (new, st)
     }
 
     pub fn st_rev_del_singleton(
@@ -589,27 +573,21 @@ impl<'a> RevHelper<'a> {
             Value::from(String::try_from(op.get(&Key::from("group")).unwrap().typed()).unwrap());
         let groups = set_from_value(old_rev.get(&user).unwrap()).unwrap();
 
-        match groups.set().len() {
+        let (new, [st0, st1]) = match groups.set().len() {
             1 => {
                 if !groups.contains(&group) {
                     panic!("User is not a member of the specified group.")
                 }
                 let (new, st_rev_del_singleton) = self.st_rev_del_singleton(old_rev, op, &user);
-                let st = st_custom!(
-                    (self.builder, self.batches),
-                    rev_del(st_rev_del_singleton, Statement::None,)
-                );
-                (new, st)
+                (new, [st_rev_del_singleton, Statement::None])
             }
             _ => {
                 let (new, st_rev_del_else) = self.st_rev_del_else(old_rev, op, &user, &group);
-                let st = st_custom!(
-                    (self.builder, self.batches),
-                    rev_del(Statement::None, st_rev_del_else,)
-                );
-                (new, st)
+                (new, [Statement::None, st_rev_del_else])
             }
-        }
+        };
+        let st = st_custom!((self.builder, self.batches), rev_del(st0, st1,));
+        (new, st)
     }
 
     pub fn st_rev_sync_add(
@@ -660,38 +638,28 @@ impl<'a> RevHelper<'a> {
         old_st_rev_sync: Statement,
     ) -> (Dictionary, Statement) {
         let name = String::try_from(op.get(&Key::from("name")).unwrap().typed()).unwrap();
-        match name.as_str() {
+        let (new, [st0, st1, st2]) = match name.as_str() {
             "init" => {
                 // rev_sync_init(rev_state, state)
                 let (new, st_rev_sync_init) = self.st_rev_sync_init(st_update, op);
-                let st = st_custom!(
-                    (self.builder, self.batches),
-                    rev_sync(st_rev_sync_init, Statement::None, Statement::None,)
-                );
-                (new, st)
+                (new, [st_rev_sync_init, Statement::None, Statement::None])
             }
             "add" => {
                 // rev_sync_add(rev_state, state)
                 let (new, st_rev_sync_add) =
                     self.st_rev_sync_add(old_rev, st_update, old_st_rev_sync, op);
-                let st = st_custom!(
-                    (self.builder, self.batches),
-                    rev_sync(Statement::None, st_rev_sync_add, Statement::None,)
-                );
-                (new, st)
+                (new, [Statement::None, st_rev_sync_add, Statement::None])
             }
             "del" => {
                 // rev_sync_del(rev_state, state)
                 let (new, st_rev_sync_del) =
                     self.st_rev_sync_del(old_rev, st_update, old_st_rev_sync, op);
-                let st = st_custom!(
-                    (self.builder, self.batches),
-                    rev_sync(Statement::None, Statement::None, st_rev_sync_del,)
-                );
-                (new, st)
+                (new, [Statement::None, Statement::None, st_rev_sync_del])
             }
             _ => panic!("invalid op.name = {}", name),
-        }
+        };
+        let st = st_custom!((self.builder, self.batches), rev_sync(st0, st1, st2,));
+        (new, st)
     }
 }
 
