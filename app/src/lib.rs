@@ -4,6 +4,7 @@ use std::{
     collections::{HashMap, HashSet},
     fmt,
     str::FromStr,
+    sync::Arc,
 };
 
 use anyhow::{Context, Result, bail};
@@ -13,7 +14,8 @@ use pod2::{
     frontend::{MainPodBuilder, Operation},
     lang::parse,
     middleware::{
-        CustomPredicateRef, EMPTY_VALUE, Key, Params, Statement, TypedValue, Value,
+        CustomPredicateBatch, CustomPredicateRef, EMPTY_VALUE, Key, Params, Statement, TypedValue,
+        Value,
         containers::{Dictionary, Set},
     },
 };
@@ -412,16 +414,52 @@ macro_rules! st_custom_from_ops {
     })
 }
 
+fn find_custom_pred_by_name(
+    batches: &[Arc<CustomPredicateBatch>],
+    name: &str,
+) -> Option<CustomPredicateRef> {
+    for batch in batches {
+        for (index, predicate) in batch.predicates().iter().enumerate() {
+            if predicate.name == name {
+                return Some(CustomPredicateRef {
+                    batch: batch.clone(),
+                    index,
+                });
+            }
+        }
+    }
+    return None;
+}
+
+macro_rules! st_custom_from_ops2 {
+    ($builder:expr, $batches:expr, $pred:ident($($ops:expr),+)) => ({
+        let custom_pred = find_custom_pred_by_name($batches, stringify!($pred)).unwrap();
+        let mut input_sts = Vec::new();
+        $( input_sts.push($builder.priv_op($ops).unwrap()); )*
+        $builder.priv_op(pod2::frontend::Operation::custom(
+            custom_pred,
+            input_sts
+        ))
+        .unwrap()
+    })
+}
+
 pub struct Helper<'a> {
     pub builder: &'a mut MainPodBuilder,
+    pub batches: &'a [Arc<CustomPredicateBatch>],
     pub predicates: &'a Predicates,
 }
 
 impl<'a> Helper<'a> {
-    pub fn new(pod_builder: &'a mut MainPodBuilder, predicates: &'a Predicates) -> Self {
+    pub fn new(
+        pod_builder: &'a mut MainPodBuilder,
+        predicates: &'a Predicates,
+        batches: &'a [Arc<CustomPredicateBatch>],
+    ) -> Self {
         Self {
             builder: pod_builder,
             predicates,
+            batches,
         }
     }
 
@@ -438,10 +476,10 @@ impl<'a> Helper<'a> {
         );
 
         // init(new, old, op)
-        let st = st_custom_from_ops!(
+        let st = st_custom_from_ops2!(
             self.builder,
-            self.predicates.init,
-            (
+            self.batches,
+            init(
                 op!(DictContains(op, "name", "init")),
                 op!(Equal(old, EMPTY_VALUE)),
                 op!(Equal(init_state, init_state))
@@ -450,23 +488,12 @@ impl<'a> Helper<'a> {
         Ok((init_state, st))
     }
 
-    pub fn st_add_del(
-        &mut self,
-        old: Dictionary,
-        op: Dictionary,
-    ) -> Result<(Dictionary, Statement)> {
+    pub fn st_add(&mut self, old: Dictionary, op: Dictionary) -> Result<(Dictionary, Statement)> {
         let name = String::try_from(op.get(&Key::from("name")).unwrap().typed()).unwrap();
-        assert!(name == "add" || name == "del");
-
-        let st0 = if name == "add" {
-            st!(self.builder, DictContains(op, "name", "add"))
-        } else {
-            st!(self.builder, DictContains(op, "name", "del"))
-        };
+        assert!(name == "add");
 
         let group = Key::try_from(op.get(&Key::from("group")).unwrap().typed()).unwrap();
         let old_group = old.get(&group).unwrap();
-        let st1 = st!(self.builder, DictContains(old, (&op, "group"), old_group));
 
         let user = op.get(&Key::from("user")).unwrap();
         let mut new_group = if let TypedValue::Set(set) = old_group.typed() {
@@ -474,45 +501,60 @@ impl<'a> Helper<'a> {
         } else {
             panic!("Value not a Set: {:?}", old_group)
         };
-        let st2 = if name == "add" {
-            if new_group.contains(user) {
-                bail!("old_group already contains user");
-            }
-            new_group.insert(user).unwrap();
-            st!(self.builder, SetInsert(new_group, old_group, (&op, "user")))
-        } else {
-            if !new_group.contains(user) {
-                bail!("old_group doesn't contain user");
-            }
-            new_group.delete(user).unwrap();
-            st!(self.builder, SetDelete(new_group, old_group, (&op, "user")))
-        };
+        if new_group.contains(user) {
+            bail!("old_group already contains user");
+        }
+        new_group.insert(user).unwrap();
 
         let mut new = old.clone();
         new.update(&group, &Value::from(new_group.clone())).unwrap();
-        // DictUpdate(new, old, op.group, new_group)
-        let st3 = st!(
-            self.builder,
-            DictUpdate(new, old, (&op, "group"), new_group)
-        );
 
-        let st = if name == "add" {
-            // add(new, old, op, private: old_group, new_group)
-            self.builder
-                .priv_op(Operation::custom(
-                    self.predicates.add.clone(),
-                    [st0, st1, st2, st3],
-                ))
-                .unwrap()
+        // add(new, old, op, private: old_group, new_group)
+        let st = st_custom_from_ops!(
+            self.builder,
+            self.predicates.add,
+            (
+                op!(DictContains(op, "name", "add")),
+                op!(DictContains(old, (&op, "group"), old_group)),
+                op!(SetInsert(new_group, old_group, (&op, "user"))),
+                op!(DictUpdate(new, old, (&op, "group"), new_group))
+            )
+        );
+        Ok((new, st))
+    }
+
+    pub fn st_del(&mut self, old: Dictionary, op: Dictionary) -> Result<(Dictionary, Statement)> {
+        let name = String::try_from(op.get(&Key::from("name")).unwrap().typed()).unwrap();
+        assert!(name == "del");
+
+        let group = Key::try_from(op.get(&Key::from("group")).unwrap().typed()).unwrap();
+        let old_group = old.get(&group).unwrap();
+
+        let user = op.get(&Key::from("user")).unwrap();
+        let mut new_group = if let TypedValue::Set(set) = old_group.typed() {
+            set.clone()
         } else {
-            // del(new, old, op, private: old_group, new_group)
-            self.builder
-                .priv_op(Operation::custom(
-                    self.predicates.del.clone(),
-                    [st0, st1, st2, st3],
-                ))
-                .unwrap()
+            panic!("Value not a Set: {:?}", old_group)
         };
+        if !new_group.contains(user) {
+            bail!("old_group doesn't contain user");
+        }
+        new_group.delete(user).unwrap();
+
+        let mut new = old.clone();
+        new.update(&group, &Value::from(new_group.clone())).unwrap();
+
+        // del(new, old, op, private: old_group, new_group)
+        let st = st_custom_from_ops!(
+            self.builder,
+            self.predicates.add,
+            (
+                op!(DictContains(op, "name", "del")),
+                op!(DictContains(old, (&op, "group"), old_group)),
+                op!(SetDelete(new_group, old_group, (&op, "user"))),
+                op!(DictUpdate(new, old, (&op, "group"), new_group))
+            )
+        );
         Ok((new, st))
     }
 
@@ -531,12 +573,12 @@ impl<'a> Helper<'a> {
             }
             "add" => {
                 // add(new, old, op, private: old_group, new_group)
-                let (new, st) = self.st_add_del(old, op)?;
+                let (new, st) = self.st_add(old, op)?;
                 (new, [st_none.clone(), st, st_none.clone()])
             }
             "del" => {
                 // del(new, old, op, private: old_group, new_group)
-                let (new, st) = self.st_add_del(old, op)?;
+                let (new, st) = self.st_del(old, op)?;
                 (new, [st_none.clone(), st_none.clone(), st])
             }
             _ => panic!("invalid op.name = {}", name),
