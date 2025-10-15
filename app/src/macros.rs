@@ -81,7 +81,7 @@ pub fn find_custom_pred_by_name(
             }
         }
     }
-    return None;
+    None
 }
 
 #[macro_export]
@@ -106,7 +106,7 @@ macro_rules! _st_custom_args {
 #[macro_export]
 macro_rules! st_custom {
     (($builder:expr, $batches:expr), $pred:ident($($args:tt)*)) => {{
-        let custom_pred = crate::macros::find_custom_pred_by_name($batches, stringify!($pred)).unwrap();
+        let custom_pred = $crate::macros::find_custom_pred_by_name($batches, stringify!($pred)).unwrap();
         let mut input_sts = Vec::new();
         _st_custom_args!($builder, &mut input_sts, $($args)*);
         $builder
