@@ -98,11 +98,10 @@ macro_rules! _st_custom_args {
     }};
 }
 
-/// ```
+/// Argument types:
 /// $builder: &mut MainPodBuilder
 /// $batches: &[Arc<CustomPredicateBatch]
 /// $args: Operation|Statement
-/// ```
 #[macro_export]
 macro_rules! st_custom {
     (($builder:expr, $batches:expr), $pred:ident($($args:tt)*)) => {{
