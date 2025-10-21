@@ -160,7 +160,7 @@ async fn handle_create(ctx: Arc<Context>, req_id: Uuid) -> Result<()> {
     // send the payload to ethereum
     let payload_bytes = Payload::Create(PayloadCreate {
         id: Hash::from(RawValue::from(new_id)), // TODO hash
-        custom_predicate_ref: ctx.pod_config.state_predicates.update.clone(),
+        custom_predicate_ref: ctx.pod_config.pred_update.clone(),
         vds_root: ctx.pod_config.vd_set.root(),
     })
     .to_bytes();
@@ -204,7 +204,7 @@ async fn handle_update(ctx: Arc<Context>, req_id: Uuid, id: i64, op: Op) -> Resu
     let start = std::time::Instant::now();
 
     let mut builder = MainPodBuilder::new(&ctx.pod_config.params, &ctx.pod_config.vd_set);
-    let mut helper = Helper::new(&mut builder, &ctx.pod_config.state_predicates);
+    let mut helper = Helper::new(&mut builder, &ctx.pod_config.batches);
 
     let op = Dictionary::from(op);
     let op_raw = RawValue::from(op.commitment());
@@ -319,11 +319,7 @@ async fn handle_update_rev(ctx: Arc<Context>, req_id: Uuid, id: i64, num: i64) -
         Statement::None
     };
 
-    let mut rev_helper = RevHelper::new(
-        &mut builder,
-        &ctx.pod_config.state_predicates,
-        &ctx.pod_config.rev_predicates,
-    );
+    let mut rev_helper = RevHelper::new(&mut builder, &ctx.pod_config.batches);
     let (rev_state, rev_st_update) =
         rev_helper.st_rev_sync(rev_state, op, st_update, old_st_rev_sync);
 

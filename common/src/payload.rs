@@ -256,14 +256,11 @@ mod tests {
         println!("ShrunkMainPod setup");
         let shrunk_main_pod_build = ShrunkMainPodSetup::new(&params).build().unwrap();
         let common_data = &shrunk_main_pod_build.circuit_data.common;
-        let (state_predicates, _rev_predicates) = app::build_predicates(&params);
+        let batches = app::build_predicates(&params);
         let id = Hash([F(1), F(2), F(3), F(4)]);
         let custom_predicate_ref = CustomPredicateRef {
-            batch: CustomPredicateBatch::new_opaque(
-                "unknown".to_string(),
-                state_predicates.update.batch.id(),
-            ),
-            index: state_predicates.update.index,
+            batch: CustomPredicateBatch::new_opaque("unknown".to_string(), batches[0].id()),
+            index: batches[0].predicate_ref_by_name("update").unwrap().index,
         };
         let vd_set = &*DEFAULT_VD_SET;
         let vds_root = vd_set.root();
@@ -280,8 +277,8 @@ mod tests {
         assert_eq!(payload_create, payload_create_decoded);
 
         let mut builder = MainPodBuilder::new(&params, vd_set);
-        let (state_predicates, _rev_predicates) = app::build_predicates(&params);
-        let mut helper = app::Helper::new(&mut builder, &state_predicates);
+        let batches = app::build_predicates(&params);
+        let mut helper = app::Helper::new(&mut builder, &batches);
 
         let state =
             containers::Dictionary::new(params.max_depth_mt_containers, HashMap::new()).unwrap();

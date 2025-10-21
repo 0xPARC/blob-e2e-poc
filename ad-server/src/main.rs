@@ -3,14 +3,14 @@ use std::{collections::HashMap, str::FromStr, sync::Arc};
 
 use alloy::primitives::Address;
 use anyhow::{Context as _, Result};
-use app::{Predicates, RevPredicates, build_predicates};
+use app::build_predicates;
 use common::{
     ProofType,
     shrink::{ShrunkMainPodBuild, ShrunkMainPodSetup},
 };
 use pod2::{
     backends::plonky2::basetypes::DEFAULT_VD_SET,
-    middleware::{Params, VDSet},
+    middleware::{CustomPredicateBatch, CustomPredicateRef, Params, VDSet},
 };
 use sqlx::{
     migrate::MigrateDatabase,
@@ -70,8 +70,8 @@ impl Config {
 pub struct PodConfig {
     params: Params,
     vd_set: VDSet,
-    state_predicates: Predicates,
-    rev_predicates: RevPredicates,
+    batches: Vec<Arc<CustomPredicateBatch>>,
+    pred_update: CustomPredicateRef,
 }
 
 pub struct Context {
@@ -137,13 +137,16 @@ async fn main() -> Result<()> {
     info!("Prebuilding circuits to calculate vd_set...");
     let vd_set = &*DEFAULT_VD_SET;
     info!("vd_set calculation complete");
-    let (state_predicates, rev_predicates) = build_predicates(&params);
+    let batches = build_predicates(&params);
+    let pred_update = batches[0]
+        .predicate_ref_by_name("update")
+        .expect("update defined");
     let shrunk_main_pod_build = ShrunkMainPodSetup::new(&params).build()?;
     let pod_config = PodConfig {
         params,
         vd_set: vd_set.clone(),
-        state_predicates,
-        rev_predicates,
+        batches,
+        pred_update,
     };
 
     if cfg.proof_type == ProofType::Groth16 {

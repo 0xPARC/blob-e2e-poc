@@ -74,10 +74,10 @@ mod tests {
     fn compute_pod_proof() -> Result<pod2::frontend::MainPod> {
         let params = Params::default();
         let vd_set = &*DEFAULT_VD_SET;
-        let (state_predicates, _) = app::build_predicates(&params);
+        let batches = app::build_predicates(&params);
 
         let mut builder = MainPodBuilder::new(&params, vd_set);
-        let mut helper = app::Helper::new(&mut builder, &state_predicates);
+        let mut helper = app::Helper::new(&mut builder, &batches);
 
         let initial_state = Dictionary::new(
             params.max_depth_mt_containers,
